@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<title>Car Buddy – Sensor Test v2</title>
+<title>Car Buddy – Sensor Test v3</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -28,7 +28,7 @@
 </style>
 </head>
 <body>
-  <h1>Car Buddy · Sensor Test <span class="small">v2</span></h1>
+  <h1>Car Buddy · Sensor Test <span class="small">v3</span></h1>
   <div id="status" class="status">Tap Start.</div>
 
   <div>
@@ -56,8 +56,11 @@
 <script>
 "use strict";
 
-// ---- Tunables (from drive #1) ---------------------------------------------
-const TH = { accel: 0.9, brake: -1.0, yaw: 8 };   // m/s², m/s², °/s
+// ---- Tunables (from drives #1 and #2) -------------------------------------
+// enter = level needed to start a reaction; stay = level needed to keep it (hysteresis)
+const TH = { accel: 0.9, accelStay: 0.4, brake: -1.0, brakeStay: -0.5, yaw: 8, yawStay: 4,
+             headDeg: 10, headWin: 1.5,          // or: heading changed >10° within 1.5 s
+             bumpV: 4.0, bumpH: 6.5, bumpMs: 800 }; // vertical / horizontal jolt, m/s²
 const ENTER_MS = 250;      // a reaction must persist this long to start
 const HOLD_MS = 600;       // and is shown at least this long
 const TAU = 0.35;          // smoothing time constant (s) — rides over bumps
@@ -66,7 +69,7 @@ const RANGE = { fwd: 3, lat: 3, yaw: 40 };
 const FWD_MIN = 0.8;       // m/s² smoothed horizontal accel needed to learn forward
 const FWD_SAMPLES = 30;
 const TURN_MIN = 6;        // °/s — samples used for the direction check
-const FLIP_EVIDENCE = 1000;// accumulated yaw·lateral evidence needed to flip
+const FLIP_EVIDENCE = 600; // accumulated yaw·lateral evidence needed to flip
 const LOG_EVERY_MS = 50;
 
 // ---- Vector helpers -------------------------------------------------------
@@ -91,6 +94,7 @@ let peaks = {};
 let log = [], lastLog = 0, t0 = 0, lastT = 0;
 let last = null, sampleCount = 0, rateT = 0, rate = 0, interval = null;
 let usedFallback = false;
+let heading = 0, headHist = [], bumpUntil = 0, lastVert = 0, lastFwdG = null;
 let currentEvent = "cruising", candidate = "cruising", candidateSince = 0, eventSince = 0;
 
 const $ = (id) => document.getElementById(id);
@@ -153,6 +157,14 @@ function onMotion(e) {
   const h = sub(lin, scale(up, dot(lin, up)));     // road-plane acceleration
   const yaw = dot(omega, up);                       // + = left turn
   sm.yaw += k * (yaw - sm.yaw);
+  heading += yaw * dt;
+  headHist.push([now, heading]);
+  while (headHist.length && now - headHist[0][0] > TH.headWin * 1000) headHist.shift();
+
+  // Bumps: a sharp vertical jolt (or a very large horizontal one)
+  const vert = dot(lin, up);
+  lastVert = vert;
+  if (Math.abs(vert) > TH.bumpV || len(h) > TH.bumpH) bumpUntil = now + TH.bumpMs;
 
   if (!fwd) {
     // Learn forward from the first sustained (smoothed) horizontal acceleration.
@@ -169,6 +181,9 @@ function onMotion(e) {
 
   const fwdA = dot(h, fwd);
   const latA = dot(h, right);
+  // Alternative forward signal from raw accel-with-gravity (logged for comparison only)
+  const gh = sub(grav, scale(up, dot(grav, up)));
+  lastFwdG = dot(gh, fwd);
   sm.fwd += k * (fwdA - sm.fwd);
   sm.lat += k * (latA - sm.lat);
 
@@ -198,17 +213,21 @@ function onMotion(e) {
   writeLog(now, fwdA, latA, yaw);
 }
 
-function classify(v) {
-  if (v.fwd < TH.brake) return "BRAKING";
-  if (v.fwd > TH.accel) return "ACCELERATING";
-  if (v.yaw > TH.yaw) return "TURNING LEFT";
-  if (v.yaw < -TH.yaw) return "TURNING RIGHT";
+function classify(v, prev, now) {
+  if (now < bumpUntil) return "BUMP";
+  if (v.fwd < TH.brake || (prev === "BRAKING" && v.fwd < TH.brakeStay)) return "BRAKING";
+  if (v.fwd > TH.accel || (prev === "ACCELERATING" && v.fwd > TH.accelStay)) return "ACCELERATING";
+  const dHead = headHist.length ? heading - headHist[0][1] : 0; // + = left
+  if (v.yaw > TH.yaw || dHead > TH.headDeg || (prev === "TURNING LEFT" && v.yaw > TH.yawStay)) return "TURNING LEFT";
+  if (v.yaw < -TH.yaw || dHead < -TH.headDeg || (prev === "TURNING RIGHT" && v.yaw < -TH.yawStay)) return "TURNING RIGHT";
   return "cruising";
 }
 
 // Debounce: a new state must persist ENTER_MS, and the shown state lasts at least HOLD_MS.
+// Bumps skip the debounce so they show instantly.
 function updateEvent(now) {
-  const c = classify(sm);
+  const c = classify(sm, currentEvent, now);
+  if (c === "BUMP" && currentEvent !== "BUMP") { currentEvent = candidate = "BUMP"; eventSince = candidateSince = now; return; }
   if (c !== candidate) { candidate = c; candidateSince = now; }
   if (candidate !== currentEvent && now - candidateSince >= ENTER_MS && now - eventSince >= HOLD_MS) {
     currentEvent = candidate; eventSince = now;
@@ -221,7 +240,8 @@ function writeLog(now, fwdA, latA, yaw) {
   const n = (v, d) => v == null ? "" : v.toFixed(d);
   log.push([((now - t0) / 1000).toFixed(3), n(fwdA, 3), n(latA, 3), yaw.toFixed(2),
             fwd ? sm.fwd.toFixed(3) : "", fwd ? sm.lat.toFixed(3) : "", sm.yaw.toFixed(2),
-            fwd ? currentEvent : "learning", flips]);
+            fwd ? currentEvent : "learning", flips, lastVert.toFixed(3), lastFwdG == null ? "" : lastFwdG.toFixed(3),
+            heading.toFixed(1)]);
 }
 
 // ---- Rendering ------------------------------------------------------------
@@ -275,7 +295,7 @@ $("startBtn").addEventListener("click", async () => {
 
 function resetForward() {
   fwd = null; right = null; hLearn = [0, 0, 0]; fwdAccum = [0, 0, 0]; fwdCount = 0;
-  turnEvidence = 0; dirChecked = false;
+  turnEvidence = 0; dirChecked = false; bumpUntil = 0;
   sm.fwd = 0; sm.lat = 0;
   currentEvent = candidate = "cruising";
 }
@@ -301,7 +321,7 @@ $("resetFwdBtn").addEventListener("click", () => {
 $("peakBtn").addEventListener("click", resetPeaks);
 
 $("csvBtn").addEventListener("click", () => {
-  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event,flips\n";
+  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event,flips,vert_raw,fwd_grav,heading_deg\n";
   const blob = new Blob([header + log.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
