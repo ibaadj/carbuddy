@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<title>Car Buddy – Sensor Test</title>
+<title>Car Buddy – Sensor Test v2</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -28,7 +28,7 @@
 </style>
 </head>
 <body>
-  <h1>Car Buddy · Sensor Test</h1>
+  <h1>Car Buddy · Sensor Test <span class="small">v2</span></h1>
   <div id="status" class="status">Tap Start.</div>
 
   <div>
@@ -48,22 +48,26 @@
   <div class="grid" id="info"></div>
 
   <p class="small">
-    How to use: mount the phone firmly, start the car, stay parked, tap <b>Calibrate</b>.
-    Then pull away gently in a straight line — the page learns which way is "forward" by itself.
-    Don't touch the phone while driving. Afterward, tap <b>Download CSV</b>.
+    How to use: mount the phone firmly. Once the car is <b>parked and pointing forward</b> (after any reversing),
+    tap <b>Calibrate</b>. Then just drive — it learns "forward" from your first pull-away and double-checks
+    the direction during turns. Don't touch the phone while driving. Afterward, tap <b>Download CSV</b>.
   </p>
 
 <script>
 "use strict";
 
-// ---- Tunables -------------------------------------------------------------
-const TH = { accel: 1.5, brake: -1.5, lat: 2.0, yaw: 20 }; // m/s², m/s², m/s², °/s
-const SMOOTH = 0.15;          // EMA factor (0..1); lower = smoother
-const RANGE = { fwd: 4, lat: 4, yaw: 60 }; // bar full-scale
-const FWD_MIN = 1.0;          // m/s² horizontal accel needed to learn "forward"
-const FWD_SAMPLES = 40;       // samples above FWD_MIN before forward is locked
+// ---- Tunables (from drive #1) ---------------------------------------------
+const TH = { accel: 0.9, brake: -1.0, yaw: 8 };   // m/s², m/s², °/s
+const ENTER_MS = 250;      // a reaction must persist this long to start
+const HOLD_MS = 600;       // and is shown at least this long
+const TAU = 0.35;          // smoothing time constant (s) — rides over bumps
+const TAU_LEARN = 0.3;     // smoothing used while learning forward
+const RANGE = { fwd: 3, lat: 3, yaw: 40 };
+const FWD_MIN = 0.8;       // m/s² smoothed horizontal accel needed to learn forward
+const FWD_SAMPLES = 30;
+const TURN_MIN = 6;        // °/s — samples used for the direction check
+const FLIP_EVIDENCE = 1000;// accumulated yaw·lateral evidence needed to flip
 const LOG_EVERY_MS = 50;
-const G = 9.80665;
 
 // ---- Vector helpers -------------------------------------------------------
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
@@ -74,18 +78,20 @@ const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a) || 1; return scale(a, 1 / l); };
 const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const G = 9.80665;
 
 // ---- State ----------------------------------------------------------------
 let wakeLock = null;
 let up = null, fwd = null, right = null;
 let calibrating = false, gravSamples = [];
-let fwdAccum = [0, 0, 0], fwdCount = 0;
+let hLearn = [0, 0, 0], fwdAccum = [0, 0, 0], fwdCount = 0;
 let sm = { fwd: 0, lat: 0, yaw: 0 };
+let turnEvidence = 0, flips = 0, dirChecked = false;
 let peaks = {};
-let log = [], lastLog = 0, t0 = 0;
+let log = [], lastLog = 0, t0 = 0, lastT = 0;
 let last = null, sampleCount = 0, rateT = 0, rate = 0, interval = null;
 let usedFallback = false;
-let currentEvent = "—";
+let currentEvent = "cruising", candidate = "cruising", candidateSince = 0, eventSince = 0;
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -94,7 +100,7 @@ function resetPeaks() { peaks = { accel: 0, brake: 0, left: 0, right: 0, yawL: 0
 resetPeaks();
 
 if (!window.isSecureContext) {
-  setStatus("Not a secure (https) page — motion sensors and keep-awake will be blocked. Host this on GitHub Pages.", "warn");
+  setStatus("Not a secure (https) page — motion sensors and keep-awake will be blocked. Open it from the github.io address.", "warn");
 }
 
 // ---- Wake lock ------------------------------------------------------------
@@ -104,7 +110,7 @@ async function requestWakeLock() {
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });
     }
-  } catch (err) { /* user can still run without it */ }
+  } catch (err) { /* page still works without it */ }
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && !wakeLock && t0) requestWakeLock();
@@ -117,16 +123,21 @@ function onMotion(e) {
   const r = e.rotationRate || {};
   interval = e.interval;
   if (ag.x == null && (!a || a.x == null)) {
-    setStatus("Chrome is blocking sensor data on this page (empty readings). Open it from an https address instead.", "warn");
+    setStatus("Chrome is blocking sensor data on this page (empty readings). Open it from the https address.", "warn");
     return;
   }
+
+  const now = performance.now();
+  const dt = lastT ? clamp((now - lastT) / 1000, 0.001, 0.2) : 0.016;
+  lastT = now;
+  const k = 1 - Math.exp(-dt / TAU);
+  const kLearn = 1 - Math.exp(-dt / TAU_LEARN);
 
   const grav = [ag.x || 0, ag.y || 0, ag.z || 0];
   let lin;
   if (a && a.x != null) {
     lin = [a.x || 0, a.y || 0, a.z || 0];
   } else {
-    // Fallback: subtract calibrated gravity (rougher, but works without a linear-accel sensor)
     usedFallback = true;
     lin = up ? sub(grav, scale(up, G)) : [0, 0, 0];
   }
@@ -139,26 +150,42 @@ function onMotion(e) {
   if (calibrating) gravSamples.push(grav);
   if (!up) return;
 
-  // Horizontal (road-plane) part of acceleration
-  const h = sub(lin, scale(up, dot(lin, up)));
+  const h = sub(lin, scale(up, dot(lin, up)));     // road-plane acceleration
+  const yaw = dot(omega, up);                       // + = left turn
+  sm.yaw += k * (yaw - sm.yaw);
 
   if (!fwd) {
-    if (len(h) > FWD_MIN) { fwdAccum = add(fwdAccum, h); fwdCount++; }
+    // Learn forward from the first sustained (smoothed) horizontal acceleration.
+    hLearn = add(hLearn, scale(sub(h, hLearn), kLearn));
+    if (len(hLearn) > FWD_MIN && Math.abs(sm.yaw) < TURN_MIN) { fwdAccum = add(fwdAccum, hLearn); fwdCount++; }
     if (fwdCount >= FWD_SAMPLES) {
       fwd = unit(fwdAccum);
       right = cross(fwd, up);
-      setStatus("Calibrated. Forward locked — drive normally.", "ok");
+      setStatus("Forward learned. Will double-check direction on your first turns.", "ok");
     }
+    writeLog(now, null, null, yaw);
     return;
   }
 
   const fwdA = dot(h, fwd);
   const latA = dot(h, right);
-  const yaw = dot(omega, up); // + = counter-clockwise from above = left turn
+  sm.fwd += k * (fwdA - sm.fwd);
+  sm.lat += k * (latA - sm.lat);
 
-  sm.fwd += SMOOTH * (fwdA - sm.fwd);
-  sm.lat += SMOOTH * (latA - sm.lat);
-  sm.yaw += SMOOTH * (yaw - sm.yaw);
+  // Direction check: in a real turn, sideways accel points INTO the turn,
+  // so yaw (+left) and lateral (+right) must have opposite signs.
+  if (Math.abs(sm.yaw) > TURN_MIN) {
+    turnEvidence += sm.yaw * sm.lat;
+    if (turnEvidence > FLIP_EVIDENCE) {
+      fwd = scale(fwd, -1); right = scale(right, -1);
+      sm.fwd = -sm.fwd; sm.lat = -sm.lat;
+      turnEvidence = 0; flips++; dirChecked = true;
+      setStatus("Forward was backwards — flipped automatically after a turn.", "ok");
+    } else if (turnEvidence < -FLIP_EVIDENCE && !dirChecked) {
+      dirChecked = true;
+      setStatus("Direction confirmed by a turn.", "ok");
+    }
+  }
 
   peaks.accel = Math.max(peaks.accel, sm.fwd);
   peaks.brake = Math.min(peaks.brake, sm.fwd);
@@ -167,28 +194,38 @@ function onMotion(e) {
   peaks.yawL = Math.max(peaks.yawL, sm.yaw);
   peaks.yawR = Math.min(peaks.yawR, sm.yaw);
 
-  currentEvent = classify(sm);
-
-  const now = performance.now();
-  if (now - lastLog >= LOG_EVERY_MS) {
-    lastLog = now;
-    log.push([((now - t0) / 1000).toFixed(3), fwdA.toFixed(3), latA.toFixed(3), yaw.toFixed(2),
-              sm.fwd.toFixed(3), sm.lat.toFixed(3), sm.yaw.toFixed(2), currentEvent]);
-  }
+  updateEvent(now);
+  writeLog(now, fwdA, latA, yaw);
 }
 
 function classify(v) {
   if (v.fwd < TH.brake) return "BRAKING";
   if (v.fwd > TH.accel) return "ACCELERATING";
-  if (v.yaw > TH.yaw || v.lat < -TH.lat) return "TURNING LEFT";
-  if (v.yaw < -TH.yaw || v.lat > TH.lat) return "TURNING RIGHT";
+  if (v.yaw > TH.yaw) return "TURNING LEFT";
+  if (v.yaw < -TH.yaw) return "TURNING RIGHT";
   return "cruising";
 }
 
-// ---- Rendering ------------------------------------------------------------
-function setBar(id, v, range) {
-  $(id).style.transform = "scaleX(" + clamp(v / range, -1, 1) + ")";
+// Debounce: a new state must persist ENTER_MS, and the shown state lasts at least HOLD_MS.
+function updateEvent(now) {
+  const c = classify(sm);
+  if (c !== candidate) { candidate = c; candidateSince = now; }
+  if (candidate !== currentEvent && now - candidateSince >= ENTER_MS && now - eventSince >= HOLD_MS) {
+    currentEvent = candidate; eventSince = now;
+  }
 }
+
+function writeLog(now, fwdA, latA, yaw) {
+  if (now - lastLog < LOG_EVERY_MS) return;
+  lastLog = now;
+  const n = (v, d) => v == null ? "" : v.toFixed(d);
+  log.push([((now - t0) / 1000).toFixed(3), n(fwdA, 3), n(latA, 3), yaw.toFixed(2),
+            fwd ? sm.fwd.toFixed(3) : "", fwd ? sm.lat.toFixed(3) : "", sm.yaw.toFixed(2),
+            fwd ? currentEvent : "learning", flips]);
+}
+
+// ---- Rendering ------------------------------------------------------------
+function setBar(id, v, range) { $(id).style.transform = "scaleX(" + clamp(v / range, -1, 1) + ")"; }
 function render(now) {
   if (now - rateT > 1000) { rate = sampleCount * 1000 / (now - rateT || 1); sampleCount = 0; rateT = now; }
 
@@ -205,6 +242,7 @@ function render(now) {
     "<span>Rotation °/s</span><span>" + f(last && last.omega) + "</span>" +
     "<span>Up vector</span><span>" + f(up) + "</span>" +
     "<span>Forward vector</span><span>" + (fwd ? f(fwd) : (up ? "learning… " + fwdCount + "/" + FWD_SAMPLES : "—")) + "</span>" +
+    "<span>Direction check</span><span>" + (fwd ? (dirChecked ? "done" : "waiting for a turn") + " · evidence " + turnEvidence.toFixed(0) + " · flips " + flips : "—") + "</span>" +
     "<span>Peak accel / brake</span><span>" + peaks.accel.toFixed(2) + " / " + peaks.brake.toFixed(2) + " m/s²</span>" +
     "<span>Peak lat L / R</span><span>" + peaks.left.toFixed(2) + " / " + peaks.right.toFixed(2) + " m/s²</span>" +
     "<span>Peak yaw L / R</span><span>" + peaks.yawL.toFixed(1) + " / " + peaks.yawR.toFixed(1) + " °/s</span>" +
@@ -216,11 +254,11 @@ function render(now) {
 
 // ---- Buttons --------------------------------------------------------------
 $("startBtn").addEventListener("click", async () => {
-  if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+  if (typeof DeviceMotionEvent === "undefined") { setStatus("This browser has no motion sensor support.", "warn"); return; }
+  if (typeof DeviceMotionEvent.requestPermission === "function") {
     try { if (await DeviceMotionEvent.requestPermission() !== "granted") { setStatus("Motion permission denied.", "warn"); return; } }
     catch (err) { setStatus("Motion permission error: " + err, "warn"); return; }
   }
-  if (typeof DeviceMotionEvent === "undefined") { setStatus("This browser has no motion sensor support.", "warn"); return; }
 
   window.addEventListener("devicemotion", onMotion);
   await requestWakeLock();
@@ -229,35 +267,41 @@ $("startBtn").addEventListener("click", async () => {
   t0 = performance.now(); rateT = t0;
   $("startBtn").disabled = true;
   ["calBtn", "resetFwdBtn", "csvBtn", "peakBtn"].forEach((id) => $(id).disabled = false);
-  setStatus("Sensors running. Park, then tap Calibrate.");
+  setStatus("Sensors running. Park facing forward, then tap Calibrate.");
   requestAnimationFrame(render);
 
   setTimeout(() => { if (!last) setStatus("No motion events received. Check Chrome site settings → Motion sensors.", "warn"); }, 2000);
 });
 
+function resetForward() {
+  fwd = null; right = null; hLearn = [0, 0, 0]; fwdAccum = [0, 0, 0]; fwdCount = 0;
+  turnEvidence = 0; dirChecked = false;
+  sm.fwd = 0; sm.lat = 0;
+  currentEvent = candidate = "cruising";
+}
+
 $("calBtn").addEventListener("click", () => {
-  gravSamples = []; calibrating = true;
-  up = null; fwd = null; right = null; fwdAccum = [0, 0, 0]; fwdCount = 0;
-  sm = { fwd: 0, lat: 0, yaw: 0 }; resetPeaks();
+  gravSamples = []; calibrating = true; up = null;
+  resetForward(); sm.yaw = 0; resetPeaks();
   setStatus("Calibrating — hold still…");
   setTimeout(() => {
     calibrating = false;
     if (gravSamples.length < 10) { setStatus("Not enough samples — try again.", "warn"); return; }
     const mean = scale(gravSamples.reduce(add, [0, 0, 0]), 1 / gravSamples.length);
     up = unit(mean);
-    setStatus("Up locked (|g| = " + len(mean).toFixed(2) + "). Now pull away gently in a straight line.", "ok");
+    setStatus("Up locked (|g| = " + len(mean).toFixed(2) + "). Now just drive — forward is learned on your first pull-away.", "ok");
   }, 1500);
 });
 
 $("resetFwdBtn").addEventListener("click", () => {
-  fwd = null; right = null; fwdAccum = [0, 0, 0]; fwdCount = 0;
-  setStatus(up ? "Re-learning forward — pull away gently in a straight line." : "Calibrate first.");
+  resetForward();
+  setStatus(up ? "Re-learning forward — pull away in a straight line." : "Calibrate first.");
 });
 
 $("peakBtn").addEventListener("click", resetPeaks);
 
 $("csvBtn").addEventListener("click", () => {
-  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event\n";
+  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event,flips\n";
   const blob = new Blob([header + log.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
