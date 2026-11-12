@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Car Buddy – Sensor Test</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: #e8e8e8; font: 15px/1.35 system-ui, sans-serif; padding: 12px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .status { padding: 8px 10px; border-radius: 8px; background: #151515; margin-bottom: 10px; }
+  .status.warn { background: #3a2500; color: #ffcf80; }
+  .status.ok { background: #0f2a14; color: #9be7a8; }
+  .event { font-size: 30px; font-weight: 700; text-align: center; padding: 16px; border-radius: 12px; background: #111; margin: 10px 0; letter-spacing: 1px; }
+  .row { display: grid; grid-template-columns: 96px 1fr 72px; align-items: center; gap: 8px; margin: 8px 0; }
+  .label { font-size: 13px; color: #bbb; }
+  .bar { position: relative; height: 20px; background: #1b1b1b; border-radius: 10px; overflow: hidden; }
+  .bar .zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #555; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 50%; transform-origin: left center; transform: scaleX(0); background: #4aa3ff; }
+  .val { text-align: right; font-variant-numeric: tabular-nums; }
+  button { font: inherit; padding: 12px 14px; border-radius: 10px; border: 0; background: #2b6cff; color: #fff; margin: 4px 4px 4px 0; }
+  button.secondary { background: #333; }
+  button:disabled { opacity: .4; }
+  .grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-variant-numeric: tabular-nums; font-size: 13px; color: #aaa; margin-top: 10px; }
+  .small { font-size: 12px; color: #888; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h1>Car Buddy · Sensor Test</h1>
+  <div id="status" class="status">Tap Start.</div>
+
+  <div>
+    <button id="startBtn">Start</button>
+    <button id="calBtn" class="secondary" disabled>Calibrate (parked)</button>
+    <button id="resetFwdBtn" class="secondary" disabled>Re-learn forward</button>
+    <button id="csvBtn" class="secondary" disabled>Download CSV</button>
+    <button id="peakBtn" class="secondary" disabled>Reset peaks</button>
+  </div>
+
+  <div id="event" class="event">—</div>
+
+  <div class="row"><span class="label">Forward<br><span class="small">+accel / −brake</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fFwd"></div></div><span class="val" id="vFwd">0.00</span></div>
+  <div class="row"><span class="label">Lateral<br><span class="small">+right / −left</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fLat"></div></div><span class="val" id="vLat">0.00</span></div>
+  <div class="row"><span class="label">Yaw °/s<br><span class="small">+left / −right</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fYaw"></div></div><span class="val" id="vYaw">0.0</span></div>
+
+  <div class="grid" id="info"></div>
+
+  <p class="small">
+    How to use: mount the phone firmly, start the car, stay parked, tap <b>Calibrate</b>.
+    Then pull away gently in a straight line — the page learns which way is "forward" by itself.
+    Don't touch the phone while driving. Afterward, tap <b>Download CSV</b>.
+  </p>
+
+<script>
+"use strict";
+
+// ---- Tunables -------------------------------------------------------------
+const TH = { accel: 1.5, brake: -1.5, lat: 2.0, yaw: 20 }; // m/s², m/s², m/s², °/s
+const SMOOTH = 0.15;          // EMA factor (0..1); lower = smoother
+const RANGE = { fwd: 4, lat: 4, yaw: 60 }; // bar full-scale
+const FWD_MIN = 1.0;          // m/s² horizontal accel needed to learn "forward"
+const FWD_SAMPLES = 40;       // samples above FWD_MIN before forward is locked
+const LOG_EVERY_MS = 50;
+const G = 9.80665;
+
+// ---- Vector helpers -------------------------------------------------------
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const scale = (a, k) => [a[0]*k, a[1]*k, a[2]*k];
+const len = (a) => Math.hypot(a[0], a[1], a[2]);
+const unit = (a) => { const l = len(a) || 1; return scale(a, 1 / l); };
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ---- State ----------------------------------------------------------------
+let wakeLock = null;
+let up = null, fwd = null, right = null;
+let calibrating = false, gravSamples = [];
+let fwdAccum = [0, 0, 0], fwdCount = 0;
+let sm = { fwd: 0, lat: 0, yaw: 0 };
+let peaks = {};
+let log = [], lastLog = 0, t0 = 0;
+let last = null, sampleCount = 0, rateT = 0, rate = 0, interval = null;
+let usedFallback = false;
+let currentEvent = "—";
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+function setStatus(msg, kind) { statusEl.textContent = msg; statusEl.className = "status" + (kind ? " " + kind : ""); }
+function resetPeaks() { peaks = { accel: 0, brake: 0, left: 0, right: 0, yawL: 0, yawR: 0 }; }
+resetPeaks();
+
+if (!window.isSecureContext) {
+  setStatus("Not a secure (https) page — motion sensors and keep-awake will be blocked. Host this on GitHub Pages.", "warn");
+}
+
+// ---- Wake lock ------------------------------------------------------------
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch (err) { /* user can still run without it */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !wakeLock && t0) requestWakeLock();
+});
+
+// ---- Motion handling ------------------------------------------------------
+function onMotion(e) {
+  const ag = e.accelerationIncludingGravity || {};
+  const a = e.acceleration;
+  const r = e.rotationRate || {};
+  interval = e.interval;
+  if (ag.x == null && (!a || a.x == null)) {
+    setStatus("Chrome is blocking sensor data on this page (empty readings). Open it from an https address instead.", "warn");
+    return;
+  }
+
+  const grav = [ag.x || 0, ag.y || 0, ag.z || 0];
+  let lin;
+  if (a && a.x != null) {
+    lin = [a.x || 0, a.y || 0, a.z || 0];
+  } else {
+    // Fallback: subtract calibrated gravity (rougher, but works without a linear-accel sensor)
+    usedFallback = true;
+    lin = up ? sub(grav, scale(up, G)) : [0, 0, 0];
+  }
+  // Device frame: x right, y top-of-screen, z out of screen.
+  // rotationRate: alpha about z, beta about x, gamma about y (°/s).
+  const omega = [r.beta || 0, r.gamma || 0, r.alpha || 0];
+
+  last = { lin, grav, omega };
+  sampleCount++;
+  if (calibrating) gravSamples.push(grav);
+  if (!up) return;
+
+  // Horizontal (road-plane) part of acceleration
+  const h = sub(lin, scale(up, dot(lin, up)));
+
+  if (!fwd) {
+    if (len(h) > FWD_MIN) { fwdAccum = add(fwdAccum, h); fwdCount++; }
+    if (fwdCount >= FWD_SAMPLES) {
+      fwd = unit(fwdAccum);
+      right = cross(fwd, up);
+      setStatus("Calibrated. Forward locked — drive normally.", "ok");
+    }
+    return;
+  }
+
+  const fwdA = dot(h, fwd);
+  const latA = dot(h, right);
+  const yaw = dot(omega, up); // + = counter-clockwise from above = left turn
+
+  sm.fwd += SMOOTH * (fwdA - sm.fwd);
+  sm.lat += SMOOTH * (latA - sm.lat);
+  sm.yaw += SMOOTH * (yaw - sm.yaw);
+
+  peaks.accel = Math.max(peaks.accel, sm.fwd);
+  peaks.brake = Math.min(peaks.brake, sm.fwd);
+  peaks.right = Math.max(peaks.right, sm.lat);
+  peaks.left = Math.min(peaks.left, sm.lat);
+  peaks.yawL = Math.max(peaks.yawL, sm.yaw);
+  peaks.yawR = Math.min(peaks.yawR, sm.yaw);
+
+  currentEvent = classify(sm);
+
+  const now = performance.now();
+  if (now - lastLog >= LOG_EVERY_MS) {
+    lastLog = now;
+    log.push([((now - t0) / 1000).toFixed(3), fwdA.toFixed(3), latA.toFixed(3), yaw.toFixed(2),
+              sm.fwd.toFixed(3), sm.lat.toFixed(3), sm.yaw.toFixed(2), currentEvent]);
+  }
+}
+
+function classify(v) {
+  if (v.fwd < TH.brake) return "BRAKING";
+  if (v.fwd > TH.accel) return "ACCELERATING";
+  if (v.yaw > TH.yaw || v.lat < -TH.lat) return "TURNING LEFT";
+  if (v.yaw < -TH.yaw || v.lat > TH.lat) return "TURNING RIGHT";
+  return "cruising";
+}
+
+// ---- Rendering ------------------------------------------------------------
+function setBar(id, v, range) {
+  $(id).style.transform = "scaleX(" + clamp(v / range, -1, 1) + ")";
+}
+function render(now) {
+  if (now - rateT > 1000) { rate = sampleCount * 1000 / (now - rateT || 1); sampleCount = 0; rateT = now; }
+
+  setBar("fFwd", sm.fwd, RANGE.fwd); $("vFwd").textContent = sm.fwd.toFixed(2);
+  setBar("fLat", sm.lat, RANGE.lat); $("vLat").textContent = sm.lat.toFixed(2);
+  setBar("fYaw", sm.yaw, RANGE.yaw); $("vYaw").textContent = sm.yaw.toFixed(1);
+  $("event").textContent = fwd ? currentEvent : "—";
+
+  const f = (a) => a ? a.map((n) => n.toFixed(2)).join(", ") : "—";
+  $("info").innerHTML =
+    "<span>Sample rate</span><span>" + rate.toFixed(0) + " Hz" + (interval ? " (reported " + interval.toFixed(0) + " ms)" : "") + "</span>" +
+    "<span>Linear accel</span><span>" + f(last && last.lin) + (usedFallback ? " (fallback)" : "") + "</span>" +
+    "<span>With gravity</span><span>" + f(last && last.grav) + "</span>" +
+    "<span>Rotation °/s</span><span>" + f(last && last.omega) + "</span>" +
+    "<span>Up vector</span><span>" + f(up) + "</span>" +
+    "<span>Forward vector</span><span>" + (fwd ? f(fwd) : (up ? "learning… " + fwdCount + "/" + FWD_SAMPLES : "—")) + "</span>" +
+    "<span>Peak accel / brake</span><span>" + peaks.accel.toFixed(2) + " / " + peaks.brake.toFixed(2) + " m/s²</span>" +
+    "<span>Peak lat L / R</span><span>" + peaks.left.toFixed(2) + " / " + peaks.right.toFixed(2) + " m/s²</span>" +
+    "<span>Peak yaw L / R</span><span>" + peaks.yawL.toFixed(1) + " / " + peaks.yawR.toFixed(1) + " °/s</span>" +
+    "<span>Logged rows</span><span>" + log.length + "</span>" +
+    "<span>Screen awake</span><span>" + (wakeLock ? "yes" : "no") + "</span>";
+
+  requestAnimationFrame(render);
+}
+
+// ---- Buttons --------------------------------------------------------------
+$("startBtn").addEventListener("click", async () => {
+  if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+    try { if (await DeviceMotionEvent.requestPermission() !== "granted") { setStatus("Motion permission denied.", "warn"); return; } }
+    catch (err) { setStatus("Motion permission error: " + err, "warn"); return; }
+  }
+  if (typeof DeviceMotionEvent === "undefined") { setStatus("This browser has no motion sensor support.", "warn"); return; }
+
+  window.addEventListener("devicemotion", onMotion);
+  await requestWakeLock();
+  try { await document.documentElement.requestFullscreen(); } catch (err) { /* optional */ }
+
+  t0 = performance.now(); rateT = t0;
+  $("startBtn").disabled = true;
+  ["calBtn", "resetFwdBtn", "csvBtn", "peakBtn"].forEach((id) => $(id).disabled = false);
+  setStatus("Sensors running. Park, then tap Calibrate.");
+  requestAnimationFrame(render);
+
+  setTimeout(() => { if (!last) setStatus("No motion events received. Check Chrome site settings → Motion sensors.", "warn"); }, 2000);
+});
+
+$("calBtn").addEventListener("click", () => {
+  gravSamples = []; calibrating = true;
+  up = null; fwd = null; right = null; fwdAccum = [0, 0, 0]; fwdCount = 0;
+  sm = { fwd: 0, lat: 0, yaw: 0 }; resetPeaks();
+  setStatus("Calibrating — hold still…");
+  setTimeout(() => {
+    calibrating = false;
+    if (gravSamples.length < 10) { setStatus("Not enough samples — try again.", "warn"); return; }
+    const mean = scale(gravSamples.reduce(add, [0, 0, 0]), 1 / gravSamples.length);
+    up = unit(mean);
+    setStatus("Up locked (|g| = " + len(mean).toFixed(2) + "). Now pull away gently in a straight line.", "ok");
+  }, 1500);
+});
+
+$("resetFwdBtn").addEventListener("click", () => {
+  fwd = null; right = null; fwdAccum = [0, 0, 0]; fwdCount = 0;
+  setStatus(up ? "Re-learning forward — pull away gently in a straight line." : "Calibrate first.");
+});
+
+$("peakBtn").addEventListener("click", resetPeaks);
+
+$("csvBtn").addEventListener("click", () => {
+  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event\n";
+  const blob = new Blob([header + log.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "car-buddy-drive-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv";
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+</script>
+</body>
+</html>
