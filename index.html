@@ -12,19 +12,57 @@
   html, body { margin: 0; height: 100%; background: #000; color: #ddd; overflow: hidden;
                font: 15px/1.3 system-ui, sans-serif; user-select: none; touch-action: manipulation; }
 
-  /* Face layers: stage (slow burn-in shift) > head (spring physics) > squish (bump) > canvas */
-  #stage { position: fixed; inset: 0; display: grid; place-items: center; transition: transform 30s linear; }
-  #head { width: min(96vw, 96vh); aspect-ratio: 1; will-change: transform; }
-  #squish { width: 100%; height: 100%; transform-origin: 50% 90%; }
+  /* Layers: shift (slow burn-in drift) > stage (screen shake) > head (physics) > squish (squash) > canvas */
+  #shift { position: fixed; inset: 0; transition: transform 30s linear; }
+  #stage { position: absolute; inset: 0; display: grid; place-items: center; }
+  #head { position: relative; width: 74vmin; aspect-ratio: 1; will-change: transform; }
+  #squish { width: 100%; height: 100%; will-change: transform; }
   #squish canvas { width: 100% !important; height: 100% !important; display: block; }
-  #squish.bump { animation: bump 520ms ease-out; }
-  @keyframes bump {
-    0% { transform: scale(1, 1); }  25% { transform: scale(1.12, .8); }
-    55% { transform: scale(.94, 1.1); } 80% { transform: scale(1.03, .97); } 100% { transform: scale(1, 1); }
+
+  #stage.shake { animation: shake 380ms linear; }
+  @keyframes shake {
+    0%, 100% { transform: translate(0, 0); }
+    15% { transform: translate(calc(var(--s) * -1px), calc(var(--s) * .6px)); }
+    30% { transform: translate(calc(var(--s) * .9px), calc(var(--s) * -.8px)); }
+    45% { transform: translate(calc(var(--s) * -.6px), calc(var(--s) * .9px)); }
+    60% { transform: translate(calc(var(--s) * .5px), calc(var(--s) * -.4px)); }
+    80% { transform: translate(calc(var(--s) * -.2px), calc(var(--s) * .2px)); }
   }
 
+  /* Dizzy stars orbiting above the head */
+  #stars { position: absolute; left: 50%; top: -2%; width: 46%; height: 16%; transform: translateX(-50%);
+           opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #stars.on { opacity: 1; }
+  #stars span { position: absolute; left: 50%; top: 20%; font-size: 7vmin; color: #ffd400; margin-left: -.5em;
+                animation: orbit 0.9s linear infinite; text-shadow: 0 0 6px #000; }
+  #stars span:nth-child(2) { animation-delay: -.3s; } #stars span:nth-child(3) { animation-delay: -.6s; }
+  @keyframes orbit {
+    0% { transform: translateX(-130%) scale(.7); opacity: .8; } 25% { transform: translateX(0) scale(1.15); opacity: 1; }
+    50% { transform: translateX(130%) scale(.7); opacity: .8; } 75% { transform: translateX(0) scale(.45); opacity: .5; }
+    100% { transform: translateX(-130%) scale(.7); opacity: .8; }
+  }
+
+  /* Comic words and glass cracks */
+  #fx { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .burst { position: absolute; transform: translate(-50%, -50%) rotate(var(--r)) scale(0);
+           font: italic 900 clamp(34px, 11vmin, 110px)/1 Impact, "Arial Black", system-ui, sans-serif;
+           color: #ffd400; -webkit-text-stroke: .06em #000; paint-order: stroke fill;
+           text-shadow: .07em .07em 0 #e0006a; letter-spacing: .02em; white-space: nowrap;
+           animation: pop 1100ms ease-out forwards; }
+  .burst.back { color: #6cf2ff; text-shadow: .07em .07em 0 #2b6cff; }
+  @keyframes pop {
+    0% { transform: translate(-50%, -50%) rotate(var(--r)) scale(.2); opacity: 0; }
+    12% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1.3); opacity: 1; }
+    25% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1); }
+    75% { opacity: 1; }
+    100% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1.08); opacity: 0; }
+  }
+  #crack { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+  #crack.on { opacity: 1; }
+  #crack.fade { opacity: 0; transition: opacity .9s ease-in; }
+
   /* UI */
-  .panel { position: fixed; background: var(--ui); border-radius: 14px; padding: 10px; transition: opacity .3s; }
+  .panel { position: fixed; background: var(--ui); border-radius: 14px; padding: 10px; transition: opacity .3s; z-index: 5; }
   .hidden { opacity: 0; pointer-events: none; }
   button { font: inherit; color: #fff; background: #2b2b2b; border: 0; border-radius: 10px; padding: 10px 14px; margin: 3px; }
   button.primary { background: #2b6cff; }
@@ -36,20 +74,30 @@
   #bar { top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
   #status { flex: 1 1 200px; font-size: 13px; color: #bbb; padding: 0 6px; }
   #status.warn { color: #ffcf80; } #status.ok { color: #9be7a8; }
-  #sim { bottom: 8px; left: 50%; transform: translateX(-50%); text-align: center; width: min(560px, 96vw); }
+  #sim { bottom: 8px; left: 50%; transform: translateX(-50%); text-align: center; width: min(640px, 96vw); }
   #sim .row { display: flex; justify-content: center; flex-wrap: wrap; }
-  #sim .hold { min-width: 86px; padding: 14px 10px; touch-action: none; }
+  #sim .hold { min-width: 76px; padding: 12px 8px; touch-action: none; }
   #sim .hold.active { background: #2b6cff; }
+  #sim .hold.big { background: #5a2330; } #sim .hold.big.active { background: #e0006a; }
   #sim .hint { font-size: 11px; color: #888; margin-top: 4px; }
   #debug { left: 8px; bottom: 8px; font: 12px/1.35 ui-monospace, monospace; color: #9f9; padding: 8px 10px; white-space: pre; pointer-events: none; }
-  /* Simulator open: shrink the face so the panels don't cover it */
-  body.simmode #stage { inset: 64px 0 150px 0; }
-  body.simmode #head { width: min(90vw, calc(100vh - 240px)); }
-  @media (prefers-reduced-motion: reduce) { #squish.bump { animation: none; } #stage { transition: none; } }
+
+  /* Simulator open: shrink the stage so the panels don't cover the play area */
+  body.simmode #stage { inset: 64px 0 170px 0; }
+  body.simmode #head { width: min(60vw, calc(100vh - 330px)); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #stage.shake { animation: none; } #shift { transition: none; } #stars span { animation: none; }
+    .burst { animation: fade 1100ms ease-out forwards; transform: translate(-50%, -50%); }
+    @keyframes fade { 0% { opacity: 0; } 15% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+  }
 </style>
 </head>
 <body>
-  <div id="stage"><div id="head"><div id="squish"></div></div></div>
+  <div id="shift"><div id="stage">
+    <div id="head"><div id="squish"></div><div id="stars"><span>★</span><span>★</span><span>★</span></div></div>
+  </div></div>
+  <div id="fx"><svg id="crack" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
   <div id="intro" class="panel">
     <h1>Car Buddy</h1>
@@ -73,8 +121,13 @@
       <button class="hold" data-k="left">◀ Left</button>
       <button class="hold" data-k="gas">▲ Gas</button>
       <button class="hold" data-k="brake">▼ Brake</button>
-      <button class="hold" data-k="hard">Hard brake</button>
       <button class="hold" data-k="right">Right ▶</button>
+    </div>
+    <div class="row">
+      <button class="hold big" data-k="sharpLeft">◀◀ Sharp</button>
+      <button class="hold big" data-k="floor">Floor it</button>
+      <button class="hold big" data-k="hard">Slam brakes</button>
+      <button class="hold big" data-k="sharpRight">Sharp ▶▶</button>
     </div>
     <div class="row">
       <button id="bumpBtn">Bump</button>
@@ -82,7 +135,7 @@
       <button id="speedBtn">1×</button>
       <button id="napBtn">Nap test</button>
     </div>
-    <div class="hint">Keyboard: ↑ gas · ↓ brake · Shift+↓ hard brake · ← → turn (Shift = sharp) · Space bump · R replay · D debug</div>
+    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug</div>
   </div>
 
   <div id="debug" class="panel hidden"></div>
@@ -94,12 +147,12 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------------------------------------------------------------- Face
 // Performance: kaia-face repaints its whole canvas every frame, and Fabric multiplies the
-// canvas by the screen's pixel ratio. Size the canvas to the head's CSS size and cap the
-// ratio at 1.5 — sharp enough on a phone, and ~4x fewer pixels to paint than before.
+// canvas by the screen's pixel ratio. Size the canvas to the head and cap the ratio at 1.5.
 fabric.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
 const px = Math.round(Math.min(700, $("head").getBoundingClientRect().width || 400));
 const face = new Face({ boundTo: "#squish", face_width: px, face_height: px });
@@ -120,12 +173,31 @@ const LOOK = {
   bump: "giggle",
   bored: "bored", sleep: "snoozing", wake: "realized-something",
 };
+// Expression sequences after a crash: [expression, ms]
+const CRASH_FACE = {
+  side:  [["flustered", 1600]],
+  top:   [["flustered", 1400]],
+  glass: [["scared", 600], ["flustered", 1200], ["exhausted", 700]],
+  back:  [["starstruck", 1200]],
+};
+const CRASH_WORDS = {
+  side: ["BONK!", "THWACK!", "OOF!", "BAM!", "WHAM!"],
+  top: ["CLONK!", "BOING!", "DONK!", "OUCH!"],
+  glass: ["SPLAT!", "SMOOSH!", "SPLOT!"],
+  back: ["WHEEE!", "ZOOOM!", "YEEHAW!"],
+};
 const LINGER_MS = 700, BORED_MS = 60000, SNOOZE_MS = 45000, WAKE_MS = 1500;
 
 let shown = null, lastEventAt = performance.now(), reaction = null, reactionUntil = 0;
 let parkedSince = null, sleeping = false, wakeUntil = 0, lastEvent = "cruising", forceNap = false;
+let crashSeq = null; // [[expr, untilTime], ...] after a crash
 
 function decide(s, now) {
+  if (crashSeq) {
+    const step = crashSeq.find((st) => now < st[1]);
+    if (step) return step[0];
+    crashSeq = null;
+  }
   let e = null;
   switch (s.event) {
     case "BRAKING": e = s.fwd < -2.5 ? LOOK.brakeHard : LOOK.brake; break;
@@ -149,56 +221,175 @@ function decide(s, now) {
   return LOOK.neutral;
 }
 
-// ---------------------------------------------------------------- Body (spring physics)
-// The head is pushed opposite to the car's acceleration and wobbles back.
-const spring = { x: 0, vx: 0, y: 0, vy: 0, r: 0, vr: 0, s: 1, vs: 0 };
-const K = 55, C = 7;   // stiffness / damping — lower C = more wobble
+// ---------------------------------------------------------------- Head physics
+// The head is a springy body inside the screen. The car's forces push it around;
+// the screen edges (x, y) and the glass in front / seat behind (z) are walls.
+// Units: ±1 = touching a wall.  x: + right · y: + down · z: + toward you
+const P = { x: 0, vx: 0, y: 0, vy: 0, z: 0, vz: 0 };
+const AX = {
+  x: { k: 38, c: 7.5 },
+  y: { k: 45, c: 6 },
+  z: { k: 32, c: 7 },
+};
+const PHYS = {
+  yawToWall: 22,     // °/s of turning that pins the head to the side wall
+  latToWall: 2.8,    // or this much sideways force (m/s²)
+  fwdToWall: 2.3,    // m/s² of braking that reaches the glass (or accel → seat)
+  bumpKick: 15,      // upward launch speed on a bump (walls/s)
+  impactV: 1.4,      // minimum impact speed for crash effects
+  bounce: 0.35,      // how much speed survives a bounce
+};
+let squash = { axis: null, side: 0, a: 0 };
+let travel = { x: 100, y: 60 };
+let lastFx = 0;
+
+function measure() {
+  const st = $("stage").getBoundingClientRect(), hd = $("head").offsetWidth;
+  travel.x = Math.max((st.width - hd) / 2, hd * 0.18);
+  travel.y = Math.max((st.height - hd) / 2, hd * 0.12);
+}
+addEventListener("resize", measure);
+
+function physics(s, dt, now) {
+  if (reducedMotion) { P.x = P.y = P.z = 0; return; }
+  const fromYaw = s.yaw / PHYS.yawToWall, fromLat = -s.lat / PHYS.latToWall;
+  const T = {
+    x: Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat,  // left turn → thrown right
+    z: -s.fwd / PHYS.fwdToWall,                                    // braking → thrown at the glass
+    y: (P.z > 0.97 && s.fwd < -0.8) ? 0.7 : 0,                     // squashed on the glass → slide down
+  };
+  for (const a of ["x", "y", "z"]) {
+    const v = "v" + a;
+    P[v] += (AX[a].k * (T[a] - P[a]) - AX[a].c * P[v]) * dt;
+    P[a] += P[v] * dt;
+    for (const side of [1, -1]) {
+      if (P[a] * side > 1) {
+        const speed = P[v] * side;
+        P[a] = side;
+        if (speed > 0) {
+          if (speed > (a === "z" && side < 0 ? 0.6 : PHYS.impactV)) crash(a, side, speed, now); // seat: softer trigger
+          P[v] = -P[v] * PHYS.bounce;
+        }
+        // Pressed against the wall: stay flattened while the force keeps pushing
+        const press = clamp((T[a] * side - 1) * 0.5, 0, 0.3);
+        if (press > squash.a || squash.axis === a) squash = { axis: a, side, a: Math.max(squash.a, press) };
+      }
+    }
+  }
+  squash.a *= Math.exp(-dt / 0.2);
+}
+
+function crash(axis, side, speed, now) {
+  const kind = axis === "x" ? "side" : axis === "y" ? (side < 0 ? "top" : null) : (side > 0 ? "glass" : "back");
+  squash = { axis, side, a: clamp(0.2 + 0.12 * speed, 0.3, kind === "back" ? 0.25 : 0.7) };
+  if (!kind || now - lastFx < 400) return;
+  lastFx = now;
+  const strength = clamp(speed / 4, 0.4, 1);
+
+  // Comic word near the impact
+  const pos = { side: [side > 0 ? 80 : 20, 45], top: [50, 14], glass: [50, 42], back: [50, 72] }[kind];
+  const el = document.createElement("div");
+  el.className = "burst " + kind;
+  el.textContent = pick(CRASH_WORDS[kind]);
+  el.style.left = pos[0] + "%"; el.style.top = pos[1] + "%";
+  el.style.setProperty("--r", (Math.random() * 30 - 15).toFixed(0) + "deg");
+  $("fx").appendChild(el);
+  setTimeout(() => el.remove(), 1150);
+
+  if (kind !== "back") {
+    const stg = $("stage");
+    stg.style.setProperty("--s", (6 + 14 * strength).toFixed(0));
+    stg.classList.remove("shake"); void stg.offsetWidth; stg.classList.add("shake");
+    $("stars").classList.add("on");
+    clearTimeout(crash.starTimer);
+    crash.starTimer = setTimeout(() => $("stars").classList.remove("on"), 1900);
+  }
+  if (kind === "glass") drawCrack();
+
+  let t = now;
+  crashSeq = CRASH_FACE[kind].map(([expr, ms]) => [expr, (t += ms)]);
+}
+
+function drawCrack() {
+  const svg = $("crack");
+  const w = innerWidth, h = innerHeight, cx = w / 2 + (Math.random() - 0.5) * w * 0.1, cy = h * 0.45;
+  let d = "";
+  const n = 9;
+  for (let i = 0; i < n; i++) {
+    let ang = (i / n) * Math.PI * 2 + Math.random() * 0.5, x = cx, y = cy;
+    d += `M${x.toFixed(0)},${y.toFixed(0)}`;
+    const len = Math.min(w, h) * (0.25 + Math.random() * 0.3);
+    for (let s = 0; s < 5; s++) {
+      ang += (Math.random() - 0.5) * 0.6;
+      x += Math.cos(ang) * len / 5; y += Math.sin(ang) * len / 5;
+      d += ` L${x.toFixed(0)},${y.toFixed(0)}`;
+    }
+  }
+  const r1 = Math.min(w, h) * 0.06, r2 = r1 * 2.2;
+  const ring = (r) => {
+    let p = "";
+    for (let i = 0; i <= 12; i++) {
+      const a = (i / 12) * Math.PI * 2, rr = r * (0.8 + Math.random() * 0.4);
+      p += (i ? " L" : "M") + (cx + Math.cos(a) * rr).toFixed(0) + "," + (cy + Math.sin(a) * rr).toFixed(0);
+    }
+    return p;
+  };
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = `<path d="${d} ${ring(r1)} ${ring(r2)}" fill="none" stroke="rgba(230,240,255,.85)" stroke-width="2.2" stroke-linejoin="round"/>` +
+                  `<path d="${d}" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="6"/>`;
+  svg.classList.remove("fade"); svg.classList.add("on");
+  clearTimeout(drawCrack.timer);
+  drawCrack.timer = setTimeout(() => { svg.classList.add("fade"); svg.classList.remove("on"); }, 1300);
+}
+
+// ---------------------------------------------------------------- Render loop
 let state = { fwd: 0, lat: 0, yaw: 0, event: "cruising", activity: 0, ready: false };
 let gazeX = 0.5, gazeY = 0.5, gsX = 0.5, gsY = 0.5, lastGazeAt = 0, lastFrame = performance.now();
 
 function frame(now) {
-  const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
+  const dt = Math.min(0.033, (now - lastFrame) / 1000); lastFrame = now;
   const s = state;
-  const m = reducedMotion ? 0 : 1;
-  // Targets: % of head size and degrees
-  const tx = m * clamp(-s.lat * 2.5 + s.yaw * 0.12, -12, 12);
-  const ty = m * clamp(-s.fwd * 2.5, -8, 8);           // accel → pushed back (up), brake → lurch (down)
-  const tr = m * clamp(-s.lat * 4 + s.yaw * 0.35, -18, 18);
-  const ts = 1 + m * clamp(-s.fwd * 0.03, -0.07, 0.09); // brake → leans toward you (bigger)
-  for (const [p, v, t] of [["x","vx",tx],["y","vy",ty],["r","vr",tr],["s","vs",ts]]) {
-    spring[v] += (K * (t - spring[p]) - C * spring[v]) * dt;
-    spring[p] += spring[v] * dt;
-  }
-  $("head").style.transform =
-    `translate(${spring.x.toFixed(2)}%, ${spring.y.toFixed(2)}%) rotate(${spring.r.toFixed(2)}deg) scale(${spring.s.toFixed(3)})`;
 
-  // Eyes look into the turn; up when accelerating, down when braking
-  // Extra smoothing + fewer, bigger gaze updates: each call restarts kaia's eye animation,
-  // so frequent tiny updates looked jittery.
+  if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) P.vy -= PHYS.bumpKick;
+  lastEvent = s.event;
+  physics(s, dt, now);
+
+  const scale = P.z >= 0 ? 1 + 0.5 * P.z : 1 + 0.38 * P.z;      // glass → huge, seat → tiny
+  const rot = P.x * 9 + clamp(P.vx, -4, 4) * 2.5;
+  $("head").style.transform =
+    `translate(${(P.x * travel.x).toFixed(1)}px, ${(P.y * travel.y).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
+
+  let sx = 1, sy = 1, origin = "50% 50%";
+  const a = squash.a;
+  if (a > 0.005) {
+    if (squash.axis === "x") { sx = 1 - 0.45 * a; sy = 1 + 0.2 * a; origin = squash.side > 0 ? "100% 50%" : "0% 50%"; }
+    else if (squash.axis === "y") { sy = 1 - 0.45 * a; sx = 1 + 0.2 * a; origin = squash.side < 0 ? "50% 0%" : "50% 100%"; }
+    else if (squash.axis === "z") { sx = 1 + 0.18 * a; sy = 1 - 0.12 * a; }
+  }
+  const sq = $("squish");
+  sq.style.transformOrigin = origin;
+  sq.style.transform = `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
+
+  // Eyes look into the turn; up when accelerating, down when braking.
+  // Smoothed + rate-limited: each call restarts kaia's eye animation.
   const kg = 1 - Math.exp(-dt / 0.4);
   gsX += kg * ((0.5 - clamp(s.yaw / 60, -0.3, 0.3)) - gsX);
   gsY += kg * ((0.5 - clamp(s.fwd * 0.08, -0.25, 0.25)) - gsY);
   const gx = +gsX.toFixed(2), gy = +gsY.toFixed(2);
   if (now - lastGazeAt > 300 && (Math.abs(gx - gazeX) > 0.04 || Math.abs(gy - gazeY) > 0.04)) {
-    try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* face still loading */ }
+    try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* loading */ }
   }
 
-  const expr = decide(s, now);
   // kaia-face loads its images asynchronously; until then calls throw, so just retry next frame
+  const expr = decide(s, now);
   if (expr !== shown) { try { face.setExpression(expr); shown = expr; } catch (err) { /* still loading */ } }
-
-  if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) {
-    const sq = $("squish"); sq.classList.remove("bump"); void sq.offsetWidth; sq.classList.add("bump");
-    spring.vy -= 60; spring.vr += (Math.random() - 0.5) * 120;
-  }
-  lastEvent = s.event;
 
   if (debugOn) {
     $("debug").textContent =
       `event  ${s.event}\nface   ${shown}\nfwd    ${s.fwd.toFixed(2)} m/s²\nlat    ${s.lat.toFixed(2)} m/s²\n` +
-      `yaw    ${s.yaw.toFixed(1)} °/s\nactiv  ${s.activity.toFixed(2)}\n` +
-      `parked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}` +
-      (sim.speed != null && simOn ? `\nspeed  ${(sim.speed * 3.6).toFixed(0)} km/h` : "") +
+      `yaw    ${s.yaw.toFixed(1)} °/s\nhead   x ${P.x.toFixed(2)} y ${P.y.toFixed(2)} z ${P.z.toFixed(2)}\n` +
+      `activ  ${s.activity.toFixed(2)}\nparked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}` +
+      (simOn ? `\nspeed  ${(sim.speed * 3.6).toFixed(0)} km/h` : "") +
       (replay ? `\nreplay ${replay.t.toFixed(1)}s / ${replay.end.toFixed(0)}s` : "");
   }
   requestAnimationFrame(frame);
@@ -207,7 +398,7 @@ function frame(now) {
 // Slow pixel shift so the static parts don't burn into the OLED screen
 function pixelShift() {
   if (reducedMotion) return;
-  $("stage").style.transform = `translate(${(Math.random() * 3 - 1.5).toFixed(2)}%, ${(Math.random() * 3 - 1.5).toFixed(2)}%)`;
+  $("shift").style.transform = `translate(${(Math.random() * 3 - 1.5).toFixed(2)}%, ${(Math.random() * 3 - 1.5).toFixed(2)}%)`;
 }
 setInterval(pixelShift, 60000);
 
@@ -230,6 +421,7 @@ $("carBtn").onclick = async () => {
   $("intro").classList.add("hidden");
   setSim(false);
   try { await document.documentElement.requestFullscreen(); } catch (e) { /* optional */ }
+  setTimeout(measure, 300);
   await motion.startSensors();
 };
 $("simBtn").onclick = () => { $("intro").classList.add("hidden"); setSim(true); };
@@ -239,7 +431,7 @@ $("relearnBtn").onclick = () => motion.relearnForward();
 
 // ---------------------------------------------------------------- Simulator
 // A tiny car model: speed, longitudinal accel, yaw rate, and road noise.
-const sim = { speed: 0, fwd: 0, yaw: 0, keys: {}, bump: false, timer: null, mult: 1, sharp: false };
+const sim = { speed: 0, fwd: 0, yaw: 0, keys: {}, bump: false, timer: null, mult: 1 };
 let replay = null;
 
 function setSim(on) {
@@ -252,8 +444,9 @@ function setSim(on) {
     motion.resetSim();
     sim.speed = 0; sim.fwd = 0; sim.yaw = 0;
     sim.timer = setInterval(simTick, 16);
-    setStatus("Simulator — hold the buttons or use the arrow keys.");
+    setStatus("Simulator — hold the buttons or use the arrow keys (Shift = dramatic).");
   }
+  requestAnimationFrame(measure);
   showBar();
 }
 
@@ -261,23 +454,26 @@ function simTick() {
   const dt = 0.016;
   if (replay) return replayTick(dt);
   const k = sim.keys;
-  let target = 0;
+  const moving = sim.speed > 0.3;
+  let target = sim.speed > 0 ? -0.15 : 0;                 // rolling resistance
   if (k.gas) target = 1.8;
-  if (k.brake) target = sim.speed > 0.3 ? -2.0 : 0;
-  if (k.hard) target = sim.speed > 0.3 ? -3.5 : 0;
-  if (!k.gas && !k.brake && !k.hard && sim.speed > 0) target = -0.15; // rolling resistance
-  sim.fwd += (target - sim.fwd) * (1 - Math.exp(-dt / 0.25));
+  if (k.floor) target = 3.4;
+  if (k.brake) target = moving ? -1.8 : 0;
+  if (k.hard) target = moving ? -4.0 : 0;
+  sim.fwd += (target - sim.fwd) * (1 - Math.exp(-dt / 0.2));
   sim.speed = clamp(sim.speed + sim.fwd * dt, 0, 35);
   if (sim.speed === 0 && sim.fwd < 0) sim.fwd = 0;
 
-  const turnTarget = (k.left ? 1 : 0) - (k.right ? 1 : 0);
-  const yawTarget = turnTarget * (sim.sharp ? 32 : 16) * clamp(sim.speed / 6, 0, 1); // °/s, + = left
-  sim.yaw += (yawTarget - sim.yaw) * (1 - Math.exp(-dt / 0.3));
-  const lat = clamp(-(sim.yaw * Math.PI / 180) * sim.speed, -5, 5);    // centripetal, + = right
+  let turn = 0;
+  if (k.left) turn += 16; if (k.right) turn -= 16;
+  if (k.sharpLeft) turn += 34; if (k.sharpRight) turn -= 34;
+  const yawTarget = turn * clamp(sim.speed / 6, 0, 1);               // °/s, + = left
+  sim.yaw += (yawTarget - sim.yaw) * (1 - Math.exp(-dt / 0.25));
+  const lat = clamp(-(sim.yaw * Math.PI / 180) * sim.speed, -6, 6);  // centripetal, + = right
 
   const rough = 0.08 + 0.5 * clamp(sim.speed / 10, 0, 1);              // road noise grows with speed
   const n = () => (Math.random() * 2 - 1) * rough;
-  const vert = sim.bump ? 6 : n();
+  const vert = sim.bump ? 7 : n();
   sim.bump = false;
   motion.feed(sim.fwd + n(), lat + n(), sim.yaw + n() * 3, vert);
 }
@@ -318,23 +514,23 @@ $("speedBtn").onclick = () => { sim.mult = sim.mult === 1 ? 4 : 1; $("speedBtn")
 $("napBtn").onclick = () => { replay = null; sim.keys = {}; sim.speed = 0; sim.fwd = 0; motion.resetSim();
   state = { ...state, fwd: 0, lat: 0, yaw: 0, activity: 0, event: "cruising" }; reactionUntil = 0; forceNap = true; };
 
-const KEYMAP = { ArrowUp: "gas", ArrowDown: "brake", ArrowLeft: "left", ArrowRight: "right" };
+// Arrow keys; Shift turns each into its dramatic version
+const KEYMAP = { ArrowUp: ["gas", "floor"], ArrowDown: ["brake", "hard"], ArrowLeft: ["left", "sharpLeft"], ArrowRight: ["right", "sharpRight"] };
 addEventListener("keydown", (e) => {
   if (e.key === "d" || e.key === "D") return toggleDebug();
   if (!simOn) { if (e.key === "s" || e.key === "S") { $("intro").classList.add("hidden"); setSim(true); } return; }
   if (e.key === " ") { e.preventDefault(); replay = null; sim.bump = true; return; }
   if (e.key === "r" || e.key === "R") return startReplay();
-  let k = KEYMAP[e.key];
-  if (k === "brake" && e.shiftKey) k = "hard";
-  if (k) { e.preventDefault(); replay = null; sim.keys[k] = true; if (k === "left" || k === "right") sim.sharp = e.shiftKey; }
+  const m = KEYMAP[e.key];
+  if (m) { e.preventDefault(); replay = null; sim.keys[m[e.shiftKey ? 1 : 0]] = true; }
 });
 addEventListener("keyup", (e) => {
-  const k = KEYMAP[e.key];
-  if (k) { sim.keys[k] = false; if (k === "brake") sim.keys.hard = false; }
-  if (e.key === "Shift") sim.keys.hard = false;
+  const m = KEYMAP[e.key];
+  if (m) { sim.keys[m[0]] = false; sim.keys[m[1]] = false; }
 });
 
 if (new URLSearchParams(location.search).has("sim")) { $("intro").classList.add("hidden"); setSim(true); }
+measure();
 requestAnimationFrame(frame);
 </script>
 </body>
