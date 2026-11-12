@@ -4,332 +4,330 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<title>Car Buddy – Sensor Test v3</title>
+<title>Car Buddy</title>
+<link rel="icon" href="data:,">
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #000; color: #e8e8e8; font: 15px/1.35 system-ui, sans-serif; padding: 12px; }
-  h1 { font-size: 18px; margin: 0 0 8px; }
-  .status { padding: 8px 10px; border-radius: 8px; background: #151515; margin-bottom: 10px; }
-  .status.warn { background: #3a2500; color: #ffcf80; }
-  .status.ok { background: #0f2a14; color: #9be7a8; }
-  .event { font-size: 30px; font-weight: 700; text-align: center; padding: 16px; border-radius: 12px; background: #111; margin: 10px 0; letter-spacing: 1px; }
-  .row { display: grid; grid-template-columns: 96px 1fr 72px; align-items: center; gap: 8px; margin: 8px 0; }
-  .label { font-size: 13px; color: #bbb; }
-  .bar { position: relative; height: 20px; background: #1b1b1b; border-radius: 10px; overflow: hidden; }
-  .bar .zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #555; }
-  .bar .fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 50%; transform-origin: left center; transform: scaleX(0); background: #4aa3ff; }
-  .val { text-align: right; font-variant-numeric: tabular-nums; }
-  button { font: inherit; padding: 12px 14px; border-radius: 10px; border: 0; background: #2b6cff; color: #fff; margin: 4px 4px 4px 0; }
-  button.secondary { background: #333; }
-  button:disabled { opacity: .4; }
-  .grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-variant-numeric: tabular-nums; font-size: 13px; color: #aaa; margin-top: 10px; }
-  .small { font-size: 12px; color: #888; margin-top: 10px; }
+  :root { color-scheme: dark; --ui: rgba(20,20,20,.88); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; overflow: hidden;
+               font: 15px/1.3 system-ui, sans-serif; user-select: none; touch-action: manipulation; }
+
+  /* Face layers: stage (slow burn-in shift) > head (spring physics) > squish (bump) > canvas */
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; transition: transform 30s linear; }
+  #head { width: min(96vw, 96vh); aspect-ratio: 1; will-change: transform; }
+  #squish { width: 100%; height: 100%; transform-origin: 50% 90%; }
+  #squish canvas { width: 100% !important; height: 100% !important; display: block; }
+  #squish.bump { animation: bump 520ms ease-out; }
+  @keyframes bump {
+    0% { transform: scale(1, 1); }  25% { transform: scale(1.12, .8); }
+    55% { transform: scale(.94, 1.1); } 80% { transform: scale(1.03, .97); } 100% { transform: scale(1, 1); }
+  }
+
+  /* UI */
+  .panel { position: fixed; background: var(--ui); border-radius: 14px; padding: 10px; transition: opacity .3s; }
+  .hidden { opacity: 0; pointer-events: none; }
+  button { font: inherit; color: #fff; background: #2b2b2b; border: 0; border-radius: 10px; padding: 10px 14px; margin: 3px; }
+  button.primary { background: #2b6cff; }
+  button.on { background: #2b6cff; }
+  #intro { inset: 0; margin: auto; width: min(420px, 92vw); height: fit-content; text-align: center; padding: 18px; }
+  #intro h1 { font-size: 20px; margin: 4px 0 6px; }
+  #intro p { color: #aaa; font-size: 13px; margin: 6px 0 12px; }
+  #intro button { width: 100%; padding: 14px; margin: 5px 0; font-size: 16px; }
+  #bar { top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+  #status { flex: 1 1 200px; font-size: 13px; color: #bbb; padding: 0 6px; }
+  #status.warn { color: #ffcf80; } #status.ok { color: #9be7a8; }
+  #sim { bottom: 8px; left: 50%; transform: translateX(-50%); text-align: center; width: min(560px, 96vw); }
+  #sim .row { display: flex; justify-content: center; flex-wrap: wrap; }
+  #sim .hold { min-width: 86px; padding: 14px 10px; touch-action: none; }
+  #sim .hold.active { background: #2b6cff; }
+  #sim .hint { font-size: 11px; color: #888; margin-top: 4px; }
+  #debug { left: 8px; bottom: 8px; font: 12px/1.35 ui-monospace, monospace; color: #9f9; padding: 8px 10px; white-space: pre; pointer-events: none; }
+  /* Simulator open: shrink the face so the panels don't cover it */
+  body.simmode #stage { inset: 64px 0 150px 0; }
+  body.simmode #head { width: min(90vw, calc(100vh - 240px)); }
+  @media (prefers-reduced-motion: reduce) { #squish.bump { animation: none; } #stage { transition: none; } }
 </style>
 </head>
 <body>
-  <h1>Car Buddy · Sensor Test <span class="small">v3</span></h1>
-  <div id="status" class="status">Tap Start.</div>
+  <div id="stage"><div id="head"><div id="squish"></div></div></div>
 
-  <div>
-    <button id="startBtn">Start</button>
-    <button id="calBtn" class="secondary" disabled>Calibrate (parked)</button>
-    <button id="resetFwdBtn" class="secondary" disabled>Re-learn forward</button>
-    <button id="csvBtn" class="secondary" disabled>Download CSV</button>
-    <button id="peakBtn" class="secondary" disabled>Reset peaks</button>
+  <div id="intro" class="panel">
+    <h1>Car Buddy</h1>
+    <p>Mount the phone, tap <b>Car mode</b>, then <b>Calibrate</b> while parked facing forward.<br>
+       Or try the <b>Simulator</b> on any device.</p>
+    <button id="carBtn" class="primary">Car mode</button>
+    <button id="simBtn">Simulator</button>
   </div>
 
-  <div id="event" class="event">—</div>
+  <div id="bar" class="panel hidden">
+    <span id="status">—</span>
+    <button id="calBtn">Calibrate</button>
+    <button id="relearnBtn">Re-learn forward</button>
+    <button id="simToggle">Simulator</button>
+    <button id="debugToggle">Debug</button>
+    <a href="sensors/"><button>Sensor test</button></a>
+  </div>
 
-  <div class="row"><span class="label">Forward<br><span class="small">+accel / −brake</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fFwd"></div></div><span class="val" id="vFwd">0.00</span></div>
-  <div class="row"><span class="label">Lateral<br><span class="small">+right / −left</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fLat"></div></div><span class="val" id="vLat">0.00</span></div>
-  <div class="row"><span class="label">Yaw °/s<br><span class="small">+left / −right</span></span><div class="bar"><div class="zero"></div><div class="fill" id="fYaw"></div></div><span class="val" id="vYaw">0.0</span></div>
+  <div id="sim" class="panel hidden">
+    <div class="row">
+      <button class="hold" data-k="left">◀ Left</button>
+      <button class="hold" data-k="gas">▲ Gas</button>
+      <button class="hold" data-k="brake">▼ Brake</button>
+      <button class="hold" data-k="hard">Hard brake</button>
+      <button class="hold" data-k="right">Right ▶</button>
+    </div>
+    <div class="row">
+      <button id="bumpBtn">Bump</button>
+      <button id="replayBtn">Replay drive #2</button>
+      <button id="speedBtn">1×</button>
+      <button id="napBtn">Nap test</button>
+    </div>
+    <div class="hint">Keyboard: ↑ gas · ↓ brake · Shift+↓ hard brake · ← → turn (Shift = sharp) · Space bump · R replay · D debug</div>
+  </div>
 
-  <div class="grid" id="info"></div>
+  <div id="debug" class="panel hidden"></div>
 
-  <p class="small">
-    How to use: mount the phone firmly. Once the car is <b>parked and pointing forward</b> (after any reversing),
-    tap <b>Calibrate</b>. Then just drive — it learns "forward" from your first pull-away and double-checks
-    the direction during turns. Don't touch the phone while driving. Afterward, tap <b>Download CSV</b>.
-  </p>
-
+<script src="vendor/fabric-1.7.22.min.js"></script>
+<script src="vendor/kaia-face.min.js"></script>
+<script src="js/motion.js"></script>
 <script>
 "use strict";
-
-// ---- Tunables (from drives #1 and #2) -------------------------------------
-// enter = level needed to start a reaction; stay = level needed to keep it (hysteresis)
-const TH = { accel: 0.9, accelStay: 0.4, brake: -1.0, brakeStay: -0.5, yaw: 8, yawStay: 4,
-             headDeg: 10, headWin: 1.5,          // or: heading changed >10° within 1.5 s
-             bumpV: 4.0, bumpH: 6.5, bumpMs: 800 }; // vertical / horizontal jolt, m/s²
-const ENTER_MS = 250;      // a reaction must persist this long to start
-const HOLD_MS = 600;       // and is shown at least this long
-const TAU = 0.35;          // smoothing time constant (s) — rides over bumps
-const TAU_LEARN = 0.3;     // smoothing used while learning forward
-const RANGE = { fwd: 3, lat: 3, yaw: 40 };
-const FWD_MIN = 0.8;       // m/s² smoothed horizontal accel needed to learn forward
-const FWD_SAMPLES = 30;
-const TURN_MIN = 6;        // °/s — samples used for the direction check
-const FLIP_EVIDENCE = 600; // accumulated yaw·lateral evidence needed to flip
-const LOG_EVERY_MS = 50;
-
-// ---- Vector helpers -------------------------------------------------------
-const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
-const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
-const scale = (a, k) => [a[0]*k, a[1]*k, a[2]*k];
-const len = (a) => Math.hypot(a[0], a[1], a[2]);
-const unit = (a) => { const l = len(a) || 1; return scale(a, 1 / l); };
-const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const G = 9.80665;
-
-// ---- State ----------------------------------------------------------------
-let wakeLock = null;
-let up = null, fwd = null, right = null;
-let calibrating = false, gravSamples = [];
-let hLearn = [0, 0, 0], fwdAccum = [0, 0, 0], fwdCount = 0;
-let sm = { fwd: 0, lat: 0, yaw: 0 };
-let turnEvidence = 0, flips = 0, dirChecked = false;
-let peaks = {};
-let log = [], lastLog = 0, t0 = 0, lastT = 0;
-let last = null, sampleCount = 0, rateT = 0, rate = 0, interval = null;
-let usedFallback = false;
-let heading = 0, headHist = [], bumpUntil = 0, lastVert = 0, lastFwdG = null;
-let currentEvent = "cruising", candidate = "cruising", candidateSince = 0, eventSince = 0;
-
 const $ = (id) => document.getElementById(id);
-const statusEl = $("status");
-function setStatus(msg, kind) { statusEl.textContent = msg; statusEl.className = "status" + (kind ? " " + kind : ""); }
-function resetPeaks() { peaks = { accel: 0, brake: 0, left: 0, right: 0, yawL: 0, yawR: 0 }; }
-resetPeaks();
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-if (!window.isSecureContext) {
-  setStatus("Not a secure (https) page — motion sensors and keep-awake will be blocked. Open it from the github.io address.", "warn");
+// ---------------------------------------------------------------- Face
+const px = Math.round(Math.min(1000, Math.min(innerWidth, innerHeight) * 0.96 * (devicePixelRatio || 1)));
+const face = new Face({ boundTo: "#squish", face_width: px, face_height: px });
+const ALL = ["annoyed","anxious","apologetic","awkward","blinking","bored","crying","default","determined",
+  "embarrased","evil","excited","exhausted","flustered","furious","giggle","happy","in-love","mischievous",
+  "realized-something","sad","sassy","scared","shocked","snoozing","starstruck","stuck-up","thinking",
+  "tired","upset","winking","wow"];
+ALL.forEach((e) => face.setGazeSpeed(e, 70, "linear"));
+face.setAnimation("*", "blinking", { enabled: true, "average-delay": 3500, scaleY: 0.12, duration: 120,
+  elements: ["left-eye", "right-eye"], easing: "easeInOutQuad" });
+
+// Which expression for which moment (easy to tweak)
+const LOOK = {
+  neutral: "shocked",          // calm pill eyes
+  accel: "excited", accelHard: "starstruck",
+  brake: "wow", brakeHard: "scared",
+  turn: "happy", turnSharp: "flustered",
+  bump: "giggle",
+  bored: "bored", sleep: "snoozing", wake: "realized-something",
+};
+const LINGER_MS = 700, BORED_MS = 60000, SNOOZE_MS = 45000, WAKE_MS = 1500;
+
+let shown = null, lastEventAt = performance.now(), reaction = null, reactionUntil = 0;
+let parkedSince = null, sleeping = false, wakeUntil = 0, lastEvent = "cruising", forceNap = false;
+
+function decide(s, now) {
+  let e = null;
+  switch (s.event) {
+    case "BRAKING": e = s.fwd < -2.5 ? LOOK.brakeHard : LOOK.brake; break;
+    case "ACCELERATING": e = s.fwd > 2.2 ? LOOK.accelHard : LOOK.accel; break;
+    case "TURNING LEFT": case "TURNING RIGHT": e = Math.abs(s.yaw) > 22 ? LOOK.turnSharp : LOOK.turn; break;
+    case "BUMP": e = LOOK.bump; break;
+  }
+  if (e) { lastEventAt = now; reaction = e; reactionUntil = now + LINGER_MS; }
+  else if (now < reactionUntil) e = reaction;
+
+  // Parked = very little road vibration (with hysteresis so it doesn't flicker)
+  const parked = !e && Math.abs(s.yaw) < 2 && s.activity < (parkedSince != null ? 0.5 : 0.3);
+  if (parked) { if (parkedSince == null) parkedSince = now; } else parkedSince = null;
+
+  if (forceNap && (e || s.activity >= 0.5)) forceNap = false;   // simulator "Nap test" until you move
+  if (forceNap || (parkedSince != null && now - parkedSince > SNOOZE_MS)) { sleeping = true; return LOOK.sleep; }
+  if (sleeping) { sleeping = false; wakeUntil = now + WAKE_MS; }
+  if (now < wakeUntil) return LOOK.wake;
+  if (e) return e;
+  if (now - lastEventAt > BORED_MS) return LOOK.bored;
+  return LOOK.neutral;
 }
 
-// ---- Wake lock ------------------------------------------------------------
-async function requestWakeLock() {
-  try {
-    if ("wakeLock" in navigator) {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    }
-  } catch (err) { /* page still works without it */ }
+// ---------------------------------------------------------------- Body (spring physics)
+// The head is pushed opposite to the car's acceleration and wobbles back.
+const spring = { x: 0, vx: 0, y: 0, vy: 0, r: 0, vr: 0, s: 1, vs: 0 };
+const K = 55, C = 7;   // stiffness / damping — lower C = more wobble
+let state = { fwd: 0, lat: 0, yaw: 0, event: "cruising", activity: 0, ready: false };
+let gazeX = 0.5, gazeY = 0.5, lastGazeAt = 0, lastFrame = performance.now();
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
+  const s = state;
+  const m = reducedMotion ? 0 : 1;
+  // Targets: % of head size and degrees
+  const tx = m * clamp(-s.lat * 2.5 + s.yaw * 0.12, -12, 12);
+  const ty = m * clamp(-s.fwd * 2.5, -8, 8);           // accel → pushed back (up), brake → lurch (down)
+  const tr = m * clamp(-s.lat * 4 + s.yaw * 0.35, -18, 18);
+  const ts = 1 + m * clamp(-s.fwd * 0.03, -0.07, 0.09); // brake → leans toward you (bigger)
+  for (const [p, v, t] of [["x","vx",tx],["y","vy",ty],["r","vr",tr],["s","vs",ts]]) {
+    spring[v] += (K * (t - spring[p]) - C * spring[v]) * dt;
+    spring[p] += spring[v] * dt;
+  }
+  $("head").style.transform =
+    `translate(${spring.x.toFixed(2)}%, ${spring.y.toFixed(2)}%) rotate(${spring.r.toFixed(2)}deg) scale(${spring.s.toFixed(3)})`;
+
+  // Eyes look into the turn; up when accelerating, down when braking
+  const gx = 0.5 - clamp(s.yaw / 60, -0.3, 0.3);
+  const gy = 0.5 - clamp(s.fwd * 0.08, -0.25, 0.25);
+  if (now - lastGazeAt > 120 && (Math.abs(gx - gazeX) > 0.02 || Math.abs(gy - gazeY) > 0.02)) {
+    try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* face still loading */ }
+  }
+
+  const expr = decide(s, now);
+  // kaia-face loads its images asynchronously; until then calls throw, so just retry next frame
+  if (expr !== shown) { try { face.setExpression(expr); shown = expr; } catch (err) { /* still loading */ } }
+
+  if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) {
+    const sq = $("squish"); sq.classList.remove("bump"); void sq.offsetWidth; sq.classList.add("bump");
+    spring.vy -= 60; spring.vr += (Math.random() - 0.5) * 120;
+  }
+  lastEvent = s.event;
+
+  if (debugOn) {
+    $("debug").textContent =
+      `event  ${s.event}\nface   ${shown}\nfwd    ${s.fwd.toFixed(2)} m/s²\nlat    ${s.lat.toFixed(2)} m/s²\n` +
+      `yaw    ${s.yaw.toFixed(1)} °/s\nactiv  ${s.activity.toFixed(2)}\n` +
+      `parked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}` +
+      (sim.speed != null && simOn ? `\nspeed  ${(sim.speed * 3.6).toFixed(0)} km/h` : "") +
+      (replay ? `\nreplay ${replay.t.toFixed(1)}s / ${replay.end.toFixed(0)}s` : "");
+  }
+  requestAnimationFrame(frame);
 }
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && !wakeLock && t0) requestWakeLock();
+
+// Slow pixel shift so the static parts don't burn into the OLED screen
+function pixelShift() {
+  if (reducedMotion) return;
+  $("stage").style.transform = `translate(${(Math.random() * 3 - 1.5).toFixed(2)}%, ${(Math.random() * 3 - 1.5).toFixed(2)}%)`;
+}
+setInterval(pixelShift, 60000);
+
+// ---------------------------------------------------------------- Motion engine
+function setStatus(msg, kind) { const el = $("status"); el.textContent = msg; el.className = kind || ""; showBar(); }
+const motion = CarMotion.create({ onState: (s) => { state = s; }, onStatus: setStatus });
+
+// ---------------------------------------------------------------- UI
+let debugOn = false, simOn = false, hideTimer = null;
+function showBar() {
+  $("bar").classList.remove("hidden");
+  clearTimeout(hideTimer);
+  if (!simOn) hideTimer = setTimeout(() => $("bar").classList.add("hidden"), 6000);
+}
+$("stage").addEventListener("click", () => { if ($("intro").classList.contains("hidden")) showBar(); });
+$("debugToggle").onclick = () => toggleDebug();
+function toggleDebug() { debugOn = !debugOn; $("debug").classList.toggle("hidden", !debugOn); $("debugToggle").classList.toggle("on", debugOn); }
+
+$("carBtn").onclick = async () => {
+  $("intro").classList.add("hidden");
+  setSim(false);
+  try { await document.documentElement.requestFullscreen(); } catch (e) { /* optional */ }
+  await motion.startSensors();
+};
+$("simBtn").onclick = () => { $("intro").classList.add("hidden"); setSim(true); };
+$("simToggle").onclick = () => setSim(!simOn);
+$("calBtn").onclick = () => motion.calibrate();
+$("relearnBtn").onclick = () => motion.relearnForward();
+
+// ---------------------------------------------------------------- Simulator
+// A tiny car model: speed, longitudinal accel, yaw rate, and road noise.
+const sim = { speed: 0, fwd: 0, yaw: 0, keys: {}, bump: false, timer: null, mult: 1, sharp: false };
+let replay = null;
+
+function setSim(on) {
+  simOn = on;
+  document.body.classList.toggle("simmode", on);
+  $("sim").classList.toggle("hidden", !on);
+  $("simToggle").classList.toggle("on", on);
+  clearInterval(sim.timer); sim.timer = null; replay = null;
+  if (on) {
+    motion.resetSim();
+    sim.speed = 0; sim.fwd = 0; sim.yaw = 0;
+    sim.timer = setInterval(simTick, 16);
+    setStatus("Simulator — hold the buttons or use the arrow keys.");
+  }
+  showBar();
+}
+
+function simTick() {
+  const dt = 0.016;
+  if (replay) return replayTick(dt);
+  const k = sim.keys;
+  let target = 0;
+  if (k.gas) target = 1.8;
+  if (k.brake) target = sim.speed > 0.3 ? -2.0 : 0;
+  if (k.hard) target = sim.speed > 0.3 ? -3.5 : 0;
+  if (!k.gas && !k.brake && !k.hard && sim.speed > 0) target = -0.15; // rolling resistance
+  sim.fwd += (target - sim.fwd) * (1 - Math.exp(-dt / 0.25));
+  sim.speed = clamp(sim.speed + sim.fwd * dt, 0, 35);
+  if (sim.speed === 0 && sim.fwd < 0) sim.fwd = 0;
+
+  const turnTarget = (k.left ? 1 : 0) - (k.right ? 1 : 0);
+  const yawTarget = turnTarget * (sim.sharp ? 32 : 16) * clamp(sim.speed / 6, 0, 1); // °/s, + = left
+  sim.yaw += (yawTarget - sim.yaw) * (1 - Math.exp(-dt / 0.3));
+  const lat = clamp(-(sim.yaw * Math.PI / 180) * sim.speed, -5, 5);    // centripetal, + = right
+
+  const rough = 0.08 + 0.5 * clamp(sim.speed / 10, 0, 1);              // road noise grows with speed
+  const n = () => (Math.random() * 2 - 1) * rough;
+  const vert = sim.bump ? 6 : n();
+  sim.bump = false;
+  motion.feed(sim.fwd + n(), lat + n(), sim.yaw + n() * 3, vert);
+}
+
+// Replay your real drive #2 log through the same engine
+async function startReplay() {
+  if (!simOn) setSim(true);
+  setStatus("Loading drive #2…");
+  const text = await (await fetch("sim/drive2.csv")).text();
+  const rows = text.trim().split("\n").slice(1).map((l) => l.split(",").map(Number));
+  const t0 = rows[0][0];
+  replay = { rows: rows.map((r) => [r[0] - t0, r[1], r[2], r[3]]), i: 0, t: 0, clock: 0 };
+  replay.end = replay.rows[replay.rows.length - 1][0];
+  motion.resetSim();
+  setStatus("Replaying drive #2 — left turn ~22s, bump ~38s, stop ~46s, hard accel ~51s, stop + right ~155s.", "ok");
+}
+function replayTick(dt) {
+  replay.t += dt * sim.mult;
+  const rows = replay.rows;
+  while (replay.i < rows.length && rows[replay.i][0] <= replay.t) {
+    const r = rows[replay.i++];
+    replay.clock = r[0] * 1000;
+    motion.feed(r[1], r[2], r[3], 0, replay.clock);
+  }
+  if (replay.i >= rows.length) { replay = null; motion.resetSim(); setStatus("Replay finished.", "ok"); }
+}
+
+document.querySelectorAll("#sim .hold").forEach((b) => {
+  const k = b.dataset.k;
+  const down = (e) => { e.preventDefault(); sim.keys[k] = true; b.classList.add("active"); replay = null; };
+  const upFn = () => { sim.keys[k] = false; b.classList.remove("active"); };
+  b.addEventListener("pointerdown", down);
+  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, upFn));
+});
+$("bumpBtn").onclick = () => { replay = null; sim.bump = true; };
+$("replayBtn").onclick = startReplay;
+$("speedBtn").onclick = () => { sim.mult = sim.mult === 1 ? 4 : 1; $("speedBtn").textContent = sim.mult + "×"; };
+$("napBtn").onclick = () => { replay = null; sim.keys = {}; sim.speed = 0; sim.fwd = 0; motion.resetSim();
+  state = { ...state, fwd: 0, lat: 0, yaw: 0, activity: 0, event: "cruising" }; reactionUntil = 0; forceNap = true; };
+
+const KEYMAP = { ArrowUp: "gas", ArrowDown: "brake", ArrowLeft: "left", ArrowRight: "right" };
+addEventListener("keydown", (e) => {
+  if (e.key === "d" || e.key === "D") return toggleDebug();
+  if (!simOn) { if (e.key === "s" || e.key === "S") { $("intro").classList.add("hidden"); setSim(true); } return; }
+  if (e.key === " ") { e.preventDefault(); replay = null; sim.bump = true; return; }
+  if (e.key === "r" || e.key === "R") return startReplay();
+  let k = KEYMAP[e.key];
+  if (k === "brake" && e.shiftKey) k = "hard";
+  if (k) { e.preventDefault(); replay = null; sim.keys[k] = true; if (k === "left" || k === "right") sim.sharp = e.shiftKey; }
+});
+addEventListener("keyup", (e) => {
+  const k = KEYMAP[e.key];
+  if (k) { sim.keys[k] = false; if (k === "brake") sim.keys.hard = false; }
+  if (e.key === "Shift") sim.keys.hard = false;
 });
 
-// ---- Motion handling ------------------------------------------------------
-function onMotion(e) {
-  const ag = e.accelerationIncludingGravity || {};
-  const a = e.acceleration;
-  const r = e.rotationRate || {};
-  interval = e.interval;
-  if (ag.x == null && (!a || a.x == null)) {
-    setStatus("Chrome is blocking sensor data on this page (empty readings). Open it from the https address.", "warn");
-    return;
-  }
-
-  const now = performance.now();
-  const dt = lastT ? clamp((now - lastT) / 1000, 0.001, 0.2) : 0.016;
-  lastT = now;
-  const k = 1 - Math.exp(-dt / TAU);
-  const kLearn = 1 - Math.exp(-dt / TAU_LEARN);
-
-  const grav = [ag.x || 0, ag.y || 0, ag.z || 0];
-  let lin;
-  if (a && a.x != null) {
-    lin = [a.x || 0, a.y || 0, a.z || 0];
-  } else {
-    usedFallback = true;
-    lin = up ? sub(grav, scale(up, G)) : [0, 0, 0];
-  }
-  // Device frame: x right, y top-of-screen, z out of screen.
-  // rotationRate: alpha about z, beta about x, gamma about y (°/s).
-  const omega = [r.beta || 0, r.gamma || 0, r.alpha || 0];
-
-  last = { lin, grav, omega };
-  sampleCount++;
-  if (calibrating) gravSamples.push(grav);
-  if (!up) return;
-
-  const h = sub(lin, scale(up, dot(lin, up)));     // road-plane acceleration
-  const yaw = dot(omega, up);                       // + = left turn
-  sm.yaw += k * (yaw - sm.yaw);
-  heading += yaw * dt;
-  headHist.push([now, heading]);
-  while (headHist.length && now - headHist[0][0] > TH.headWin * 1000) headHist.shift();
-
-  // Bumps: a sharp vertical jolt (or a very large horizontal one)
-  const vert = dot(lin, up);
-  lastVert = vert;
-  if (Math.abs(vert) > TH.bumpV || len(h) > TH.bumpH) bumpUntil = now + TH.bumpMs;
-
-  if (!fwd) {
-    // Learn forward from the first sustained (smoothed) horizontal acceleration.
-    hLearn = add(hLearn, scale(sub(h, hLearn), kLearn));
-    if (len(hLearn) > FWD_MIN && Math.abs(sm.yaw) < TURN_MIN) { fwdAccum = add(fwdAccum, hLearn); fwdCount++; }
-    if (fwdCount >= FWD_SAMPLES) {
-      fwd = unit(fwdAccum);
-      right = cross(fwd, up);
-      setStatus("Forward learned. Will double-check direction on your first turns.", "ok");
-    }
-    writeLog(now, null, null, yaw);
-    return;
-  }
-
-  const fwdA = dot(h, fwd);
-  const latA = dot(h, right);
-  // Alternative forward signal from raw accel-with-gravity (logged for comparison only)
-  const gh = sub(grav, scale(up, dot(grav, up)));
-  lastFwdG = dot(gh, fwd);
-  sm.fwd += k * (fwdA - sm.fwd);
-  sm.lat += k * (latA - sm.lat);
-
-  // Direction check: in a real turn, sideways accel points INTO the turn,
-  // so yaw (+left) and lateral (+right) must have opposite signs.
-  if (Math.abs(sm.yaw) > TURN_MIN) {
-    turnEvidence += sm.yaw * sm.lat;
-    if (turnEvidence > FLIP_EVIDENCE) {
-      fwd = scale(fwd, -1); right = scale(right, -1);
-      sm.fwd = -sm.fwd; sm.lat = -sm.lat;
-      turnEvidence = 0; flips++; dirChecked = true;
-      setStatus("Forward was backwards — flipped automatically after a turn.", "ok");
-    } else if (turnEvidence < -FLIP_EVIDENCE && !dirChecked) {
-      dirChecked = true;
-      setStatus("Direction confirmed by a turn.", "ok");
-    }
-  }
-
-  peaks.accel = Math.max(peaks.accel, sm.fwd);
-  peaks.brake = Math.min(peaks.brake, sm.fwd);
-  peaks.right = Math.max(peaks.right, sm.lat);
-  peaks.left = Math.min(peaks.left, sm.lat);
-  peaks.yawL = Math.max(peaks.yawL, sm.yaw);
-  peaks.yawR = Math.min(peaks.yawR, sm.yaw);
-
-  updateEvent(now);
-  writeLog(now, fwdA, latA, yaw);
-}
-
-function classify(v, prev, now) {
-  if (now < bumpUntil) return "BUMP";
-  if (v.fwd < TH.brake || (prev === "BRAKING" && v.fwd < TH.brakeStay)) return "BRAKING";
-  if (v.fwd > TH.accel || (prev === "ACCELERATING" && v.fwd > TH.accelStay)) return "ACCELERATING";
-  const dHead = headHist.length ? heading - headHist[0][1] : 0; // + = left
-  if (v.yaw > TH.yaw || dHead > TH.headDeg || (prev === "TURNING LEFT" && v.yaw > TH.yawStay)) return "TURNING LEFT";
-  if (v.yaw < -TH.yaw || dHead < -TH.headDeg || (prev === "TURNING RIGHT" && v.yaw < -TH.yawStay)) return "TURNING RIGHT";
-  return "cruising";
-}
-
-// Debounce: a new state must persist ENTER_MS, and the shown state lasts at least HOLD_MS.
-// Bumps skip the debounce so they show instantly.
-function updateEvent(now) {
-  const c = classify(sm, currentEvent, now);
-  if (c === "BUMP" && currentEvent !== "BUMP") { currentEvent = candidate = "BUMP"; eventSince = candidateSince = now; return; }
-  if (c !== candidate) { candidate = c; candidateSince = now; }
-  if (candidate !== currentEvent && now - candidateSince >= ENTER_MS && now - eventSince >= HOLD_MS) {
-    currentEvent = candidate; eventSince = now;
-  }
-}
-
-function writeLog(now, fwdA, latA, yaw) {
-  if (now - lastLog < LOG_EVERY_MS) return;
-  lastLog = now;
-  const n = (v, d) => v == null ? "" : v.toFixed(d);
-  log.push([((now - t0) / 1000).toFixed(3), n(fwdA, 3), n(latA, 3), yaw.toFixed(2),
-            fwd ? sm.fwd.toFixed(3) : "", fwd ? sm.lat.toFixed(3) : "", sm.yaw.toFixed(2),
-            fwd ? currentEvent : "learning", flips, lastVert.toFixed(3), lastFwdG == null ? "" : lastFwdG.toFixed(3),
-            heading.toFixed(1)]);
-}
-
-// ---- Rendering ------------------------------------------------------------
-function setBar(id, v, range) { $(id).style.transform = "scaleX(" + clamp(v / range, -1, 1) + ")"; }
-function render(now) {
-  if (now - rateT > 1000) { rate = sampleCount * 1000 / (now - rateT || 1); sampleCount = 0; rateT = now; }
-
-  setBar("fFwd", sm.fwd, RANGE.fwd); $("vFwd").textContent = sm.fwd.toFixed(2);
-  setBar("fLat", sm.lat, RANGE.lat); $("vLat").textContent = sm.lat.toFixed(2);
-  setBar("fYaw", sm.yaw, RANGE.yaw); $("vYaw").textContent = sm.yaw.toFixed(1);
-  $("event").textContent = fwd ? currentEvent : "—";
-
-  const f = (a) => a ? a.map((n) => n.toFixed(2)).join(", ") : "—";
-  $("info").innerHTML =
-    "<span>Sample rate</span><span>" + rate.toFixed(0) + " Hz" + (interval ? " (reported " + interval.toFixed(0) + " ms)" : "") + "</span>" +
-    "<span>Linear accel</span><span>" + f(last && last.lin) + (usedFallback ? " (fallback)" : "") + "</span>" +
-    "<span>With gravity</span><span>" + f(last && last.grav) + "</span>" +
-    "<span>Rotation °/s</span><span>" + f(last && last.omega) + "</span>" +
-    "<span>Up vector</span><span>" + f(up) + "</span>" +
-    "<span>Forward vector</span><span>" + (fwd ? f(fwd) : (up ? "learning… " + fwdCount + "/" + FWD_SAMPLES : "—")) + "</span>" +
-    "<span>Direction check</span><span>" + (fwd ? (dirChecked ? "done" : "waiting for a turn") + " · evidence " + turnEvidence.toFixed(0) + " · flips " + flips : "—") + "</span>" +
-    "<span>Peak accel / brake</span><span>" + peaks.accel.toFixed(2) + " / " + peaks.brake.toFixed(2) + " m/s²</span>" +
-    "<span>Peak lat L / R</span><span>" + peaks.left.toFixed(2) + " / " + peaks.right.toFixed(2) + " m/s²</span>" +
-    "<span>Peak yaw L / R</span><span>" + peaks.yawL.toFixed(1) + " / " + peaks.yawR.toFixed(1) + " °/s</span>" +
-    "<span>Logged rows</span><span>" + log.length + "</span>" +
-    "<span>Screen awake</span><span>" + (wakeLock ? "yes" : "no") + "</span>";
-
-  requestAnimationFrame(render);
-}
-
-// ---- Buttons --------------------------------------------------------------
-$("startBtn").addEventListener("click", async () => {
-  if (typeof DeviceMotionEvent === "undefined") { setStatus("This browser has no motion sensor support.", "warn"); return; }
-  if (typeof DeviceMotionEvent.requestPermission === "function") {
-    try { if (await DeviceMotionEvent.requestPermission() !== "granted") { setStatus("Motion permission denied.", "warn"); return; } }
-    catch (err) { setStatus("Motion permission error: " + err, "warn"); return; }
-  }
-
-  window.addEventListener("devicemotion", onMotion);
-  await requestWakeLock();
-  try { await document.documentElement.requestFullscreen(); } catch (err) { /* optional */ }
-
-  t0 = performance.now(); rateT = t0;
-  $("startBtn").disabled = true;
-  ["calBtn", "resetFwdBtn", "csvBtn", "peakBtn"].forEach((id) => $(id).disabled = false);
-  setStatus("Sensors running. Park facing forward, then tap Calibrate.");
-  requestAnimationFrame(render);
-
-  setTimeout(() => { if (!last) setStatus("No motion events received. Check Chrome site settings → Motion sensors.", "warn"); }, 2000);
-});
-
-function resetForward() {
-  fwd = null; right = null; hLearn = [0, 0, 0]; fwdAccum = [0, 0, 0]; fwdCount = 0;
-  turnEvidence = 0; dirChecked = false; bumpUntil = 0;
-  sm.fwd = 0; sm.lat = 0;
-  currentEvent = candidate = "cruising";
-}
-
-$("calBtn").addEventListener("click", () => {
-  gravSamples = []; calibrating = true; up = null;
-  resetForward(); sm.yaw = 0; resetPeaks();
-  setStatus("Calibrating — hold still…");
-  setTimeout(() => {
-    calibrating = false;
-    if (gravSamples.length < 10) { setStatus("Not enough samples — try again.", "warn"); return; }
-    const mean = scale(gravSamples.reduce(add, [0, 0, 0]), 1 / gravSamples.length);
-    up = unit(mean);
-    setStatus("Up locked (|g| = " + len(mean).toFixed(2) + "). Now just drive — forward is learned on your first pull-away.", "ok");
-  }, 1500);
-});
-
-$("resetFwdBtn").addEventListener("click", () => {
-  resetForward();
-  setStatus(up ? "Re-learning forward — pull away in a straight line." : "Calibrate first.");
-});
-
-$("peakBtn").addEventListener("click", resetPeaks);
-
-$("csvBtn").addEventListener("click", () => {
-  const header = "t_s,fwd_raw,lat_raw,yaw_raw,fwd_smooth,lat_smooth,yaw_smooth,event,flips,vert_raw,fwd_grav,heading_deg\n";
-  const blob = new Blob([header + log.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "car-buddy-drive-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv";
-  document.body.appendChild(link); link.click(); link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-});
+if (new URLSearchParams(location.search).has("sim")) { $("intro").classList.add("hidden"); setSim(true); }
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
