@@ -97,7 +97,11 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------------------------------------------------------------- Face
-const px = Math.round(Math.min(1000, Math.min(innerWidth, innerHeight) * 0.96 * (devicePixelRatio || 1)));
+// Performance: kaia-face repaints its whole canvas every frame, and Fabric multiplies the
+// canvas by the screen's pixel ratio. Size the canvas to the head's CSS size and cap the
+// ratio at 1.5 — sharp enough on a phone, and ~4x fewer pixels to paint than before.
+fabric.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+const px = Math.round(Math.min(700, $("head").getBoundingClientRect().width || 400));
 const face = new Face({ boundTo: "#squish", face_width: px, face_height: px });
 const ALL = ["annoyed","anxious","apologetic","awkward","blinking","bored","crying","default","determined",
   "embarrased","evil","excited","exhausted","flustered","furious","giggle","happy","in-love","mischievous",
@@ -150,7 +154,7 @@ function decide(s, now) {
 const spring = { x: 0, vx: 0, y: 0, vy: 0, r: 0, vr: 0, s: 1, vs: 0 };
 const K = 55, C = 7;   // stiffness / damping — lower C = more wobble
 let state = { fwd: 0, lat: 0, yaw: 0, event: "cruising", activity: 0, ready: false };
-let gazeX = 0.5, gazeY = 0.5, lastGazeAt = 0, lastFrame = performance.now();
+let gazeX = 0.5, gazeY = 0.5, gsX = 0.5, gsY = 0.5, lastGazeAt = 0, lastFrame = performance.now();
 
 function frame(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
@@ -169,9 +173,13 @@ function frame(now) {
     `translate(${spring.x.toFixed(2)}%, ${spring.y.toFixed(2)}%) rotate(${spring.r.toFixed(2)}deg) scale(${spring.s.toFixed(3)})`;
 
   // Eyes look into the turn; up when accelerating, down when braking
-  const gx = 0.5 - clamp(s.yaw / 60, -0.3, 0.3);
-  const gy = 0.5 - clamp(s.fwd * 0.08, -0.25, 0.25);
-  if (now - lastGazeAt > 120 && (Math.abs(gx - gazeX) > 0.02 || Math.abs(gy - gazeY) > 0.02)) {
+  // Extra smoothing + fewer, bigger gaze updates: each call restarts kaia's eye animation,
+  // so frequent tiny updates looked jittery.
+  const kg = 1 - Math.exp(-dt / 0.4);
+  gsX += kg * ((0.5 - clamp(s.yaw / 60, -0.3, 0.3)) - gsX);
+  gsY += kg * ((0.5 - clamp(s.fwd * 0.08, -0.25, 0.25)) - gsY);
+  const gx = +gsX.toFixed(2), gy = +gsY.toFixed(2);
+  if (now - lastGazeAt > 300 && (Math.abs(gx - gazeX) > 0.04 || Math.abs(gy - gazeY) > 0.04)) {
     try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* face still loading */ }
   }
 
