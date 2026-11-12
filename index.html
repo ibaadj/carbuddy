@@ -86,7 +86,16 @@
   #intro h1 { font-size: 20px; margin: 4px 0 6px; }
   #intro p { color: #aaa; font-size: 13px; margin: 6px 0 12px; }
   #intro button { width: 100%; padding: 14px; margin: 5px 0; font-size: 16px; }
-  #bar { top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+  #bar { top: 8px; left: 8px; right: 60px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+  /* Small, dim menu button — the only way to open the controls */
+  #menuBtn { position: fixed; top: 10px; right: 10px; z-index: 6; width: 44px; height: 44px; padding: 0; margin: 0;
+             border-radius: 50%; background: rgba(40,40,40,.6); font-size: 22px; line-height: 44px; opacity: .25; transition: opacity .3s; }
+  #menuBtn:hover, #menuBtn.open { opacity: 1; }
+  /* Status messages appear as a small pill that fades away on its own */
+  #toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); max-width: min(560px, 80vw); z-index: 4;
+           background: rgba(20,20,20,.85); color: #ccc; font-size: 13px; padding: 7px 12px; border-radius: 999px;
+           pointer-events: none; transition: opacity .5s; text-align: center; }
+  #toast.warn { color: #ffcf80; } #toast.ok { color: #9be7a8; }
   #status { flex: 1 1 200px; font-size: 13px; color: #bbb; padding: 0 6px; }
   #status.warn { color: #ffcf80; } #status.ok { color: #9be7a8; }
   #sim { bottom: 8px; left: 50%; transform: translateX(-50%); text-align: center; width: min(640px, 96vw); }
@@ -131,6 +140,8 @@
     <button id="simBtn">Simulator</button>
   </div>
 
+  <button id="menuBtn" class="hidden" aria-label="Menu">⋯</button>
+  <div id="toast" class="hidden"></div>
   <div id="bar" class="panel hidden">
     <span id="status">—</span>
     <button id="calBtn">Calibrate</button>
@@ -139,6 +150,7 @@
     <button id="soundBtn">Sound on</button>
     <button id="simToggle">Simulator</button>
     <button id="debugToggle">Debug</button>
+    <button id="hideBtn">Hide</button>
     <a href="sensors/"><button>Sensor test</button></a>
   </div>
 
@@ -167,7 +179,7 @@
       <button id="idleBtn">Idle bit</button>
       <button id="nightBtn">Night: auto</button>
     </div>
-    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug · tap or click the face to poke it</div>
+    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug · H hide/show controls · tap the face to poke it</div>
   </div>
 
   <div id="debug" class="panel hidden"></div>
@@ -541,17 +553,36 @@ function pixelShift() {
 setInterval(pixelShift, 60000);
 
 // ---------------------------------------------------------------- Motion engine
-function setStatus(msg, kind) { const el = $("status"); el.textContent = msg; el.className = kind || ""; showBar(); }
+let toastTimer = null;
+function setStatus(msg, kind) {
+  const el = $("status"); el.textContent = msg; el.className = kind || "";
+  // Don't pop the whole menu open — show a small message that fades by itself
+  if (!$("bar").classList.contains("hidden")) return;
+  const t = $("toast"); t.textContent = msg; t.className = kind || "";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), kind === "warn" ? 8000 : 4000);
+}
 const motion = CarMotion.create({ onState: (s) => { state = s; }, onStatus: setStatus });
 
 // ---------------------------------------------------------------- UI
-let debugOn = false, simOn = false, hideTimer = null;
-function showBar() {
-  $("bar").classList.remove("hidden");
+let debugOn = false, simOn = false, hideTimer = null, controlsOpen = false;
+// Controls (menu bar + simulator panel) only open from the ⋯ button, and close by themselves
+// after 8 s in car mode. In the simulator they stay until you tap ⋯ or Hide (or press H).
+function setControls(open) {
+  controlsOpen = open;
+  $("bar").classList.toggle("hidden", !open);
+  $("sim").classList.toggle("hidden", !(open && simOn));
+  $("menuBtn").classList.toggle("open", open);
+  document.body.classList.toggle("simmode", open && simOn);
+  if (open) $("toast").classList.add("hidden");
   clearTimeout(hideTimer);
-  if (!simOn) hideTimer = setTimeout(() => $("bar").classList.add("hidden"), 6000);
+  if (open && !simOn) hideTimer = setTimeout(() => setControls(false), 8000);
+  requestAnimationFrame(measure);
 }
-$("stage").addEventListener("click", () => { if ($("intro").classList.contains("hidden")) showBar(); });
+function showBar() { setControls(true); }
+$("menuBtn").onclick = (e) => { e.stopPropagation(); setControls(!controlsOpen); };
+$("hideBtn").onclick = () => setControls(false);
+$("bar").addEventListener("pointerdown", () => { if (!simOn) { clearTimeout(hideTimer); hideTimer = setTimeout(() => setControls(false), 8000); } });
 // Browsers only allow sound after a tap/click
 addEventListener("pointerdown", () => Sfx.unlock(), { capture: true });
 addEventListener("keydown", () => Sfx.unlock(), { capture: true });
@@ -583,12 +614,14 @@ function toggleDebug() { debugOn = !debugOn; $("debug").classList.toggle("hidden
 
 $("carBtn").onclick = async () => {
   $("intro").classList.add("hidden");
+  $("menuBtn").classList.remove("hidden");
   setSim(false);
   try { await document.documentElement.requestFullscreen(); } catch (e) { /* optional */ }
   setTimeout(measure, 300);
   await motion.startSensors();
 };
-$("simBtn").onclick = () => { $("intro").classList.add("hidden"); setSim(true); };
+function enterSim() { $("intro").classList.add("hidden"); $("menuBtn").classList.remove("hidden"); setSim(true); }
+$("simBtn").onclick = enterSim;
 $("simToggle").onclick = () => setSim(!simOn);
 $("calBtn").onclick = () => motion.calibrate();
 $("relearnBtn").onclick = () => motion.relearnForward();
@@ -604,8 +637,6 @@ let replay = null;
 
 function setSim(on) {
   simOn = on;
-  document.body.classList.toggle("simmode", on);
-  $("sim").classList.toggle("hidden", !on);
   $("simToggle").classList.toggle("on", on);
   clearInterval(sim.timer); sim.timer = null; replay = null;
   if (on) {
@@ -614,8 +645,7 @@ function setSim(on) {
     sim.timer = setInterval(simTick, 16);
     setStatus("Simulator — hold the buttons or use the arrow keys (Shift = dramatic).");
   }
-  requestAnimationFrame(measure);
-  showBar();
+  setControls(on);     // simulator opens with its controls; car mode starts with everything hidden
 }
 
 function simTick() {
@@ -697,7 +727,8 @@ $("napBtn").onclick = () => { replay = null; sim.keys = {}; sim.speed = 0; sim.f
 const KEYMAP = { ArrowUp: ["gas", "floor"], ArrowDown: ["brake", "hard"], ArrowLeft: ["left", "sharpLeft"], ArrowRight: ["right", "sharpRight"] };
 addEventListener("keydown", (e) => {
   if (e.key === "d" || e.key === "D") return toggleDebug();
-  if (!simOn) { if (e.key === "s" || e.key === "S") { $("intro").classList.add("hidden"); setSim(true); } return; }
+  if ((e.key === "h" || e.key === "H") && $("intro").classList.contains("hidden")) return setControls(!controlsOpen);
+  if (!simOn) { if (e.key === "s" || e.key === "S") enterSim(); return; }
   if (e.key === " ") { e.preventDefault(); replay = null; sim.bump = true; return; }
   if (e.key === "r" || e.key === "R") return startReplay();
   const m = KEYMAP[e.key];
@@ -708,7 +739,7 @@ addEventListener("keyup", (e) => {
   if (m) { sim.keys[m[0]] = false; sim.keys[m[1]] = false; }
 });
 
-if (new URLSearchParams(location.search).has("sim")) { $("intro").classList.add("hidden"); setSim(true); }
+if (new URLSearchParams(location.search).has("sim")) enterSim();
 measure();
 requestAnimationFrame(frame);
 </script>
