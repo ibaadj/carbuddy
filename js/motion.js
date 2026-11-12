@@ -5,6 +5,11 @@
  *   const m = CarMotion.create({ onState, onStatus });
  *   m.startSensors()  m.calibrate()  m.relearnForward()      // real phone
  *   m.feed(fwd, lat, yawDegPerSec, vert)                     // simulator
+ *   m.forgetCalibration()  m.calibrationInfo()
+ *
+ * Calibration (which way is up and forward for this phone mount) is saved on the
+ * phone and reused next time. While parked, the engine checks that gravity still
+ * points the same way; if the phone was moved, it re-calibrates by itself.
  *
  * onState(s): { fwd, lat, yaw, event, ready, activity, heading }
  *   fwd: +accelerating / −braking (m/s²)   lat: +right / −left (m/s²)
@@ -16,11 +21,20 @@
 
   const TH = {
     accel: 0.9, accelStay: 0.4, brake: -1.0, brakeStay: -0.5, yaw: 8, yawStay: 4,
-    headDeg: 10, headWin: 1.5, bumpV: 4.0, bumpH: 6.5, bumpMs: 800,
+    headDeg: 10, headWin: 1.5, bumpV: 4.0, bumpH: 4.5, bumpMs: 800,
   };
   const ENTER_MS = 250, HOLD_MS = 600, TAU = 0.35, TAU_LEARN = 0.3, TAU_ACT = 2.0;
   const FWD_MIN = 0.8, FWD_SAMPLES = 30, TURN_MIN = 6, FLIP_EVIDENCE = 600;
   const G = 9.80665;
+  const CAL_KEY = "carbuddy.calibration.v1";
+  const MOVED_DEG = 10;        // gravity off by more than this while parked = phone was moved
+
+  function loadCal() {
+    try { const c = JSON.parse(localStorage.getItem(CAL_KEY)); return c && c.up && c.fwd ? c : null; }
+    catch (err) { return null; }
+  }
+  function saveCal(c) { try { localStorage.setItem(CAL_KEY, JSON.stringify(c)); } catch (err) { /* private mode etc. */ } }
+  function clearCal() { try { localStorage.removeItem(CAL_KEY); } catch (err) { /* ignore */ } }
 
   const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
   const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
@@ -40,9 +54,30 @@
     let hLearn = [0, 0, 0], fwdAccum = [0, 0, 0], fwdCount = 0;
     let turnEvidence = 0, dirChecked = false;
     let sm = { fwd: 0, lat: 0, yaw: 0 };
-    let heading = 0, headHist = [], bumpUntil = 0, activity = 0;
+    let heading = 0, headHist = [], bumpUntil = 0, activity = 0, hSlow = 0;
     let current = "cruising", candidate = "cruising", candidateSince = 0, eventSince = 0;
     let lastT = 0, simMode = false, wakeLock = null, listening = false, gotEvents = false;
+    let fromSaved = false, mountCheck = { sum: [0, 0, 0], n: 0, start: 0, strikes: 0 };
+
+    function persist(confirmed) {
+      if (!up || !fwd) return;
+      saveCal({ up, fwd, confirmed: !!confirmed, savedAt: new Date().toISOString() });
+    }
+
+    // While parked, average gravity for 2 s and compare with the saved "up".
+    function checkMount(grav, now) {
+      if (activity > 0.3 || Math.abs(sm.yaw) > 2) { mountCheck = { sum: [0, 0, 0], n: 0, start: now, strikes: mountCheck.strikes }; return; }
+      if (!mountCheck.n) mountCheck.start = now;
+      mountCheck.sum = add(mountCheck.sum, grav); mountCheck.n++;
+      if (now - mountCheck.start < 2000) return;
+      const g = unit(mountCheck.sum);
+      const deg = Math.acos(clamp(dot(g, up), -1, 1)) * 180 / Math.PI;
+      mountCheck = { sum: [0, 0, 0], n: 0, start: now, strikes: deg > MOVED_DEG ? mountCheck.strikes + 1 : 0 };
+      if (mountCheck.strikes >= 2) {
+        up = g; resetForward(); fromSaved = false; mountCheck.strikes = 0;
+        onStatus("Phone was moved — re-calibrated. Forward is re-learned on your next pull-away.", "warn");
+      }
+    }
 
     function resetForward() {
       fwd = null; right = null; hLearn = [0, 0, 0]; fwdAccum = [0, 0, 0]; fwdCount = 0;
@@ -62,7 +97,10 @@
       while (headHist.length && now - headHist[0][0] > TH.headWin * 1000) headHist.shift();
       activity += (1 - Math.exp(-dt / TAU_ACT)) * (hMag - activity);
 
-      if (Math.abs(vert) > TH.bumpV || hMag > TH.bumpH) bumpUntil = now + TH.bumpMs;
+      // Bumps are sudden spikes: a vertical jolt, or horizontal force jumping well above its
+      // recent level (so a long hard corner with big sideways force is NOT a bump)
+      hSlow += (1 - Math.exp(-dt / 0.3)) * (hMag - hSlow);
+      if (Math.abs(vert) > TH.bumpV || hMag - hSlow > TH.bumpH) bumpUntil = now + TH.bumpMs;
 
       if (fwdA != null) {
         sm.fwd += k * (fwdA - sm.fwd);
@@ -114,6 +152,7 @@
       const omega = [r.beta || 0, r.gamma || 0, r.alpha || 0];
       if (calibrating) gravSamples.push(grav);
       if (!up) return;
+      if (!calibrating) checkMount(grav, now);
 
       const h = sub(lin, scale(up, dot(lin, up)));
       const yaw = dot(omega, up);
@@ -126,7 +165,8 @@
         if (len(hLearn) > FWD_MIN && Math.abs(sm.yaw) < TURN_MIN) { fwdAccum = add(fwdAccum, hLearn); fwdCount++; }
         if (fwdCount >= FWD_SAMPLES) {
           fwd = unit(fwdAccum); right = cross(fwd, up);
-          onStatus("Ready — forward learned.", "ok");
+          persist(false);
+          onStatus("Ready — forward learned and saved.", "ok");
         }
         return;
       }
@@ -138,9 +178,11 @@
         if (turnEvidence > FLIP_EVIDENCE) {
           fwd = scale(fwd, -1); right = scale(right, -1);
           sm.fwd = -sm.fwd; sm.lat = -sm.lat; turnEvidence = 0; dirChecked = true;
-          onStatus("Forward was backwards — fixed automatically.", "ok");
+          persist(true);
+          onStatus("Forward was backwards — fixed automatically and saved.", "ok");
         } else if (turnEvidence < -FLIP_EVIDENCE && !dirChecked) {
-          dirChecked = true; onStatus("Direction confirmed.", "ok");
+          dirChecked = true; persist(true);
+          onStatus("Direction confirmed — calibration locked in.", "ok");
         }
       }
     }
@@ -168,7 +210,14 @@
       if (!listening) { window.addEventListener("devicemotion", onMotion); listening = true; }
       await requestWakeLock();
       setTimeout(() => { if (!gotEvents) onStatus("No sensor data. Check Chrome site settings → Motion sensors.", "warn"); }, 2000);
-      onStatus("Sensors on. Park facing forward, then tap Calibrate.");
+      const saved = loadCal();
+      if (saved && !up) {
+        up = saved.up; fwd = saved.fwd; right = cross(fwd, up); fromSaved = true;
+        dirChecked = !!saved.confirmed; turnEvidence = 0;
+        onStatus("Using saved calibration — ready to drive.", "ok");
+      } else if (!up) {
+        onStatus("Sensors on. Park facing forward, then tap Calibrate.");
+      }
       return true;
     }
 
@@ -183,6 +232,15 @@
       }, 1500);
     }
 
+    function forgetCalibration() {
+      clearCal(); up = null; resetForward(); fromSaved = false;
+      onStatus("Saved calibration cleared. Park facing forward, then tap Calibrate.");
+    }
+    function calibrationInfo() {
+      const c = loadCal();
+      return { saved: !!c, confirmed: !!(c && c.confirmed), savedAt: c && c.savedAt, inUse: !!(up && fwd), fromSaved };
+    }
+
     function relearnForward() { resetForward(); onStatus("Re-learning forward — pull away in a straight line."); }
 
     // ---- Simulator ----------------------------------------------------------
@@ -194,10 +252,10 @@
     }
     function resetSim() {
       sm = { fwd: 0, lat: 0, yaw: 0 }; current = candidate = "cruising"; headHist = [];
-      bumpUntil = 0; activity = 0; lastT = 0; candidateSince = eventSince = 0; heading = 0;
+      bumpUntil = 0; activity = 0; hSlow = 0; lastT = 0; candidateSince = eventSince = 0; heading = 0;
     }
 
-    return { startSensors, calibrate, relearnForward, feed, resetSim,
+    return { startSensors, calibrate, relearnForward, feed, resetSim, forgetCalibration, calibrationInfo,
              hasWakeLock: () => !!wakeLock, isSim: () => simMode, TH };
   }
 

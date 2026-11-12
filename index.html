@@ -13,7 +13,8 @@
                font: 15px/1.3 system-ui, sans-serif; user-select: none; touch-action: manipulation; }
 
   /* Layers: shift (slow burn-in drift) > stage (screen shake) > head (physics) > squish (squash) > canvas */
-  #shift { position: fixed; inset: 0; transition: transform 30s linear; }
+  #shift { position: fixed; inset: 0; transition: transform 30s linear, opacity 2s; }
+  body.night #shift { opacity: .55; }                 /* night mode: dimmer */
   #stage { position: absolute; inset: 0; display: grid; place-items: center; }
   #head { position: relative; width: 74vmin; aspect-ratio: 1; will-change: transform; }
   #squish { width: 100%; height: 100%; will-change: transform; }
@@ -28,6 +29,17 @@
     60% { transform: translate(calc(var(--s) * .5px), calc(var(--s) * -.4px)); }
     80% { transform: translate(calc(var(--s) * -.2px), calc(var(--s) * .2px)); }
   }
+
+  /* Sunglasses (long smooth cruise) */
+  #shades { position: absolute; left: 10%; top: 34%; width: 80%; pointer-events: none; opacity: 0;
+            transform: translateY(-180%) rotate(-10deg);
+            transition: transform .5s cubic-bezier(.3, 1.6, .5, 1), opacity .2s; }
+  #shades.on { opacity: 1; transform: none; }
+  #shades.fly { opacity: 0; transform: translate(70%, -280%) rotate(50deg); transition: transform .55s ease-in, opacity .55s; }
+  /* Carsick green tint */
+  #squish canvas { transition: filter 1.2s; }
+  body.sick #squish canvas { filter: sepia(1) hue-rotate(50deg) saturate(3.2) brightness(1.05); }
+  #head { cursor: pointer; }
 
   /* Dizzy stars orbiting above the head */
   #stars { position: absolute; left: 50%; top: -2%; width: 46%; height: 16%; transform: translateX(-50%);
@@ -50,6 +62,9 @@
            text-shadow: .07em .07em 0 #e0006a; letter-spacing: .02em; white-space: nowrap;
            animation: pop 1100ms ease-out forwards; }
   .burst.back { color: #6cf2ff; text-shadow: .07em .07em 0 #2b6cff; }
+  .burst.sick { color: #b6ff7a; text-shadow: .07em .07em 0 #2d7a1f; }
+  .burst.poke { font-size: clamp(26px, 7vmin, 70px); color: #fff; text-shadow: .07em .07em 0 #e0006a; }
+  .burst.small { font-size: clamp(22px, 6vmin, 60px); }
   @keyframes pop {
     0% { transform: translate(-50%, -50%) rotate(var(--r)) scale(.2); opacity: 0; }
     12% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1.3); opacity: 1; }
@@ -83,11 +98,12 @@
   #debug { left: 8px; bottom: 8px; font: 12px/1.35 ui-monospace, monospace; color: #9f9; padding: 8px 10px; white-space: pre; pointer-events: none; }
 
   /* Simulator open: shrink the stage so the panels don't cover the play area */
-  body.simmode #stage { inset: 64px 0 170px 0; }
-  body.simmode #head { width: min(60vw, calc(100vh - 330px)); }
+  body.simmode #stage { inset: 64px 0 220px 0; }
+  body.simmode #head { width: min(60vw, calc(100vh - 380px)); }
 
   @media (prefers-reduced-motion: reduce) {
-    #stage.shake { animation: none; } #shift { transition: none; } #stars span { animation: none; }
+    #stage.shake { animation: none; } #shift { transition: opacity 2s; } #stars span { animation: none; }
+    #shades, #shades.fly { transition: opacity .3s; transform: none; }
     .burst { animation: fade 1100ms ease-out forwards; transform: translate(-50%, -50%); }
     @keyframes fade { 0% { opacity: 0; } 15% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
   }
@@ -95,7 +111,15 @@
 </head>
 <body>
   <div id="shift"><div id="stage">
-    <div id="head"><div id="squish"></div><div id="stars"><span>★</span><span>★</span><span>★</span></div></div>
+    <div id="head"><div id="squish"></div>
+      <svg id="shades" viewBox="0 0 100 33" aria-hidden="true">
+        <path d="M3,5 H97 V9 H3 Z" fill="#0d0d0d"/>
+        <rect x="7" y="6" width="38" height="23" rx="9" fill="#050505" stroke="#2a2a2a" stroke-width="1.2"/>
+        <rect x="55" y="6" width="38" height="23" rx="9" fill="#050505" stroke="#2a2a2a" stroke-width="1.2"/>
+        <path d="M45,11 Q50,7.5 55,11" stroke="#0d0d0d" stroke-width="3.5" fill="none"/>
+        <path d="M13,11 L24,11 M13,15 L18,15 M61,11 L72,11 M61,15 L66,15" stroke="rgba(255,255,255,.35)" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <div id="stars"><span>★</span><span>★</span><span>★</span></div></div>
   </div></div>
   <div id="fx"><svg id="crack" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
@@ -111,6 +135,8 @@
     <span id="status">—</span>
     <button id="calBtn">Calibrate</button>
     <button id="relearnBtn">Re-learn forward</button>
+    <button id="forgetBtn">Reset calibration</button>
+    <button id="soundBtn">Sound on</button>
     <button id="simToggle">Simulator</button>
     <button id="debugToggle">Debug</button>
     <a href="sensors/"><button>Sensor test</button></a>
@@ -135,7 +161,13 @@
       <button id="speedBtn">1×</button>
       <button id="napBtn">Nap test</button>
     </div>
-    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug</div>
+    <div class="row">
+      <button id="cruiseBtn">Highway test</button>
+      <button id="sickBtn">Carsick test</button>
+      <button id="idleBtn">Idle bit</button>
+      <button id="nightBtn">Night: auto</button>
+    </div>
+    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug · tap or click the face to poke it</div>
   </div>
 
   <div id="debug" class="panel hidden"></div>
@@ -143,6 +175,7 @@
 <script src="vendor/fabric-1.7.22.min.js"></script>
 <script src="vendor/kaia-face.min.js"></script>
 <script src="js/motion.js"></script>
+<script src="js/sfx.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -186,18 +219,50 @@ const CRASH_WORDS = {
   glass: ["SPLAT!", "SMOOSH!", "SPLOT!"],
   back: ["WHEEE!", "ZOOOM!", "YEEHAW!"],
 };
-const LINGER_MS = 700, BORED_MS = 60000, SNOOZE_MS = 45000, WAKE_MS = 1500;
+const CRASH_SOUND = { side: "bonk", top: "clonk", glass: "splat", back: "wheee" };
+
+// Idle personality bits: [expression, ms, optional gaze [x, y]]
+const IDLE_BITS = [
+  [["shocked", 700, [0.2, 0.5]], ["shocked", 700, [0.8, 0.5]], ["shocked", 500, [0.5, 0.35]], ["thinking", 1300]], // look around
+  [["winking", 900]],
+  [["mischievous", 1600, [0.75, 0.6]]],
+  [["happy", 1500]],
+  [["thinking", 1800, [0.3, 0.3]]],
+  [["bored", 2200, [0.5, 0.7]]],
+  [["sassy", 1300]],
+  [["in-love", 1300]],
+  [["tired", 1800]],   // yawn
+];
+const NIGHT_BITS = [[["tired", 2000]], [["exhausted", 1800]], [["tired", 1200], ["snoozing", 1500], ["realized-something", 700]]];
+
+const LINGER_MS = 700, SNOOZE_MS = 45000, SNOOZE_NIGHT_MS = 20000, WAKE_MS = 1500;
+const COOL_MS = 40000;          // smooth driving this long → sunglasses
+const SICK_TURNS = 4, SICK_WINDOW = 25000, SICK_MS = 15000;  // this many turns in 25 s → carsick
 
 let shown = null, lastEventAt = performance.now(), reaction = null, reactionUntil = 0;
 let parkedSince = null, sleeping = false, wakeUntil = 0, lastEvent = "cruising", forceNap = false;
-let crashSeq = null; // [[expr, untilTime], ...] after a crash
+let act = null, actGaze = null;       // a short scripted sequence that overrides the face
+let cool = false, sickUntil = 0, turnTimes = [], nextIdleAt = performance.now() + 20000;
+let night = false, nightForced = null, nextSnoreAt = 0;
+const isSick = (now) => now < sickUntil;
+
+// Play a sequence of [expression, ms, gaze]. Higher prio wins: 1 idle · 2 poke/sick · 3 crash
+function playAct(steps, prio, now) {
+  if (act && act.prio > prio && now < act.steps[act.steps.length - 1][1]) return false;
+  let t = now;
+  act = { prio, steps: steps.map(([e, ms, g]) => [e, (t += ms), g || null]) };
+  return true;
+}
+function currentAct(now) {
+  if (!act) return null;
+  const st = act.steps.find((x) => now < x[1]);
+  if (!st) act = null;
+  return st || null;
+}
+
+const DRIVING = { BRAKING: 1, ACCELERATING: 1, "TURNING LEFT": 1, "TURNING RIGHT": 1, BUMP: 1 };
 
 function decide(s, now) {
-  if (crashSeq) {
-    const step = crashSeq.find((st) => now < st[1]);
-    if (step) return step[0];
-    crashSeq = null;
-  }
   let e = null;
   switch (s.event) {
     case "BRAKING": e = s.fwd < -2.5 ? LOOK.brakeHard : LOOK.brake; break;
@@ -206,20 +271,69 @@ function decide(s, now) {
     case "BUMP": e = LOOK.bump; break;
   }
   if (e) { lastEventAt = now; reaction = e; reactionUntil = now + LINGER_MS; }
-  else if (now < reactionUntil) e = reaction;
+
+  if (e && act && act.prio <= 1) act = null;            // driving interrupts idle bits
+  const st = currentAct(now);
+  actGaze = st ? st[2] : null;
+  if (st) return st[0];
+
+  if (!e && now < reactionUntil) e = reaction;
 
   // Parked = very little road vibration (with hysteresis so it doesn't flicker)
   const parked = !e && Math.abs(s.yaw) < 2 && s.activity < (parkedSince != null ? 0.5 : 0.3);
   if (parked) { if (parkedSince == null) parkedSince = now; } else parkedSince = null;
 
   if (forceNap && (e || s.activity >= 0.5)) forceNap = false;   // simulator "Nap test" until you move
-  if (forceNap || (parkedSince != null && now - parkedSince > SNOOZE_MS)) { sleeping = true; return LOOK.sleep; }
-  if (sleeping) { sleeping = false; wakeUntil = now + WAKE_MS; }
+  const snoozeAfter = night ? SNOOZE_NIGHT_MS : SNOOZE_MS;
+  if (forceNap || (parkedSince != null && now - parkedSince > snoozeAfter)) {
+    if (!sleeping) setCool(false);
+    sleeping = true;
+    if (now > nextSnoreAt) { Sfx.play("snore"); nextSnoreAt = now + 3800; }
+    return LOOK.sleep;
+  }
+  if (sleeping) { sleeping = false; wakeUntil = now + WAKE_MS; Sfx.play("ding"); }
   if (now < wakeUntil) return LOOK.wake;
   if (e) return e;
-  if (now - lastEventAt > BORED_MS) return LOOK.bored;
+  if (cool) return "tired";                 // relaxed eyes behind the sunglasses
+  if (isSick(now)) return "tired";
   return LOOK.neutral;
 }
+
+// Called once when a new driving event starts
+function onEventStart(ev, now) {
+  if (!DRIVING[ev]) return;
+  lastEventAt = now;
+  if (cool) setCool(false, true);
+  if (ev === "TURNING LEFT" || ev === "TURNING RIGHT") {
+    turnTimes = turnTimes.filter((t) => now - t < SICK_WINDOW);
+    turnTimes.push(now);
+    if (turnTimes.length >= SICK_TURNS && !isSick(now)) getSick(now);
+  }
+}
+
+function getSick(now) {
+  sickUntil = now + SICK_MS; turnTimes = [];
+  document.body.classList.add("sick");
+  playAct([["flustered", 1300], ["exhausted", 1600]], 2, now);
+  burst("sick", pick(["BLEGH…", "UGH…", "URP!"]), 50, 18);
+  Sfx.play("blegh");
+}
+
+function setCool(on, fly) {
+  if (cool === on) return;
+  cool = on;
+  const el = $("shades");
+  if (on) { el.classList.remove("fly"); el.classList.add("on"); Sfx.play("cool"); }
+  else { el.classList.remove("on"); if (fly) { el.classList.add("fly"); setTimeout(() => el.classList.remove("fly"), 700); } }
+}
+
+function updateNight() {
+  const h = new Date().getHours();
+  night = nightForced != null ? nightForced : (h >= 21 || h < 6);
+  document.body.classList.toggle("night", night);
+}
+updateNight();
+setInterval(updateNight, 60000);
 
 // ---------------------------------------------------------------- Head physics
 // The head is a springy body inside the screen. The car's forces push it around;
@@ -254,7 +368,8 @@ function physics(s, dt, now) {
   if (reducedMotion) { P.x = P.y = P.z = 0; return; }
   const fromYaw = s.yaw / PHYS.yawToWall, fromLat = -s.lat / PHYS.latToWall;
   const T = {
-    x: Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat,  // left turn → thrown right
+    x: (Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat)  // left turn → thrown right
+       + (isSick(now) ? 0.18 * Math.sin(now / 380) : 0),               // carsick: woozy sway
     z: -s.fwd / PHYS.fwdToWall,                                    // braking → thrown at the glass
     y: (P.z > 0.97 && s.fwd < -0.8) ? 0.7 : 0,                     // squashed on the glass → slide down
   };
@@ -267,7 +382,10 @@ function physics(s, dt, now) {
         const speed = P[v] * side;
         P[a] = side;
         if (speed > 0) {
-          if (speed > (a === "z" && side < 0 ? 0.6 : PHYS.impactV)) crash(a, side, speed, now); // seat: softer trigger
+          // Crash if it hits fast, or if the force is shoving it well past the wall
+          // (turns and brakes build up gradually, so the head can arrive slowly)
+          const shoved = T[a] * side > 1.2 && speed > 0.3;
+          if (speed > (a === "z" && side < 0 ? 0.6 : PHYS.impactV) || shoved) crash(a, side, Math.max(speed, 2), now);
           P[v] = -P[v] * PHYS.bounce;
         }
         // Pressed against the wall: stay flattened while the force keeps pushing
@@ -286,15 +404,11 @@ function crash(axis, side, speed, now) {
   lastFx = now;
   const strength = clamp(speed / 4, 0.4, 1);
 
-  // Comic word near the impact
+  // Comic word near the impact, plus a sound
   const pos = { side: [side > 0 ? 80 : 20, 45], top: [50, 14], glass: [50, 42], back: [50, 72] }[kind];
-  const el = document.createElement("div");
-  el.className = "burst " + kind;
-  el.textContent = pick(CRASH_WORDS[kind]);
-  el.style.left = pos[0] + "%"; el.style.top = pos[1] + "%";
-  el.style.setProperty("--r", (Math.random() * 30 - 15).toFixed(0) + "deg");
-  $("fx").appendChild(el);
-  setTimeout(() => el.remove(), 1150);
+  burst(kind, pick(CRASH_WORDS[kind]), pos[0], pos[1]);
+  Sfx.play(CRASH_SOUND[kind]);
+  if (kind === "side") onEventStart("TURNING LEFT", now);   // slamming counts toward carsick
 
   if (kind !== "back") {
     const stg = $("stage");
@@ -306,8 +420,18 @@ function crash(axis, side, speed, now) {
   }
   if (kind === "glass") drawCrack();
 
-  let t = now;
-  crashSeq = CRASH_FACE[kind].map(([expr, ms]) => [expr, (t += ms)]);
+  playAct(CRASH_FACE[kind], 3, now);
+}
+
+function burst(cls, text, xPct, yPct) {
+  if (cls.startsWith("poke")) document.querySelectorAll(".burst.poke").forEach((b) => b.remove());  // no pile-ups
+  const el = document.createElement("div");
+  el.className = "burst " + cls;
+  el.textContent = text;
+  el.style.left = xPct + "%"; el.style.top = yPct + "%";
+  el.style.setProperty("--r", (Math.random() * 30 - 15).toFixed(0) + "deg");
+  $("fx").appendChild(el);
+  setTimeout(() => el.remove(), 1150);
 }
 
 function drawCrack() {
@@ -350,8 +474,18 @@ function frame(now) {
   const dt = Math.min(0.033, (now - lastFrame) / 1000); lastFrame = now;
   const s = state;
 
+  if (s.event !== lastEvent) onEventStart(s.event, now);
   if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) P.vy -= PHYS.bumpKick;
   lastEvent = s.event;
+
+  // Personality: sunglasses on a long smooth drive, carsick wears off, idle bits
+  if (!cool && !sleeping && !isSick(now) && s.ready && !DRIVING[s.event] && s.activity > 0.35 && now - lastEventAt > COOL_MS) setCool(true);
+  if (sickUntil && !isSick(now)) { sickUntil = 0; document.body.classList.remove("sick"); }
+  if (now > nextIdleAt) {
+    const calm = !act && !sleeping && !cool && now > reactionUntil && now > wakeUntil && !DRIVING[s.event];
+    if (calm) playAct(pick(night || isSick(now) ? NIGHT_BITS : IDLE_BITS), 1, now);
+    nextIdleAt = now + 18000 + Math.random() * 17000;
+  }
   physics(s, dt, now);
 
   const scale = P.z >= 0 ? 1 + 0.5 * P.z : 1 + 0.38 * P.z;      // glass → huge, seat → tiny
@@ -370,25 +504,29 @@ function frame(now) {
   sq.style.transformOrigin = origin;
   sq.style.transform = `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
 
+  const expr = decide(s, now);
+
   // Eyes look into the turn; up when accelerating, down when braking.
   // Smoothed + rate-limited: each call restarts kaia's eye animation.
   const kg = 1 - Math.exp(-dt / 0.4);
   gsX += kg * ((0.5 - clamp(s.yaw / 60, -0.3, 0.3)) - gsX);
   gsY += kg * ((0.5 - clamp(s.fwd * 0.08, -0.25, 0.25)) - gsY);
-  const gx = +gsX.toFixed(2), gy = +gsY.toFixed(2);
-  if (now - lastGazeAt > 300 && (Math.abs(gx - gazeX) > 0.04 || Math.abs(gy - gazeY) > 0.04)) {
+  let gx = +gsX.toFixed(2), gy = +gsY.toFixed(2);
+  if (actGaze) { gx = actGaze[0]; gy = actGaze[1]; }       // scripted glances
+  if ((actGaze ? now - lastGazeAt > 100 : now - lastGazeAt > 300) && (Math.abs(gx - gazeX) > 0.04 || Math.abs(gy - gazeY) > 0.04)) {
     try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* loading */ }
   }
 
   // kaia-face loads its images asynchronously; until then calls throw, so just retry next frame
-  const expr = decide(s, now);
   if (expr !== shown) { try { face.setExpression(expr); shown = expr; } catch (err) { /* still loading */ } }
 
   if (debugOn) {
     $("debug").textContent =
       `event  ${s.event}\nface   ${shown}\nfwd    ${s.fwd.toFixed(2)} m/s²\nlat    ${s.lat.toFixed(2)} m/s²\n` +
       `yaw    ${s.yaw.toFixed(1)} °/s\nhead   x ${P.x.toFixed(2)} y ${P.y.toFixed(2)} z ${P.z.toFixed(2)}\n` +
-      `activ  ${s.activity.toFixed(2)}\nparked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}` +
+      `activ  ${s.activity.toFixed(2)}\nparked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}\n` +
+      `mood   ${[cool && "cool", isSick(now) && "carsick", sleeping && "asleep", night && "night", act && "act:" + act.prio].filter(Boolean).join(" ") || "-"}\n` +
+      `calm   ${((now - lastEventAt) / 1000).toFixed(0)}s (shades at ${COOL_MS / 1000}s)` +
       (simOn ? `\nspeed  ${(sim.speed * 3.6).toFixed(0)} km/h` : "") +
       (replay ? `\nreplay ${replay.t.toFixed(1)}s / ${replay.end.toFixed(0)}s` : "");
   }
@@ -414,6 +552,32 @@ function showBar() {
   if (!simOn) hideTimer = setTimeout(() => $("bar").classList.add("hidden"), 6000);
 }
 $("stage").addEventListener("click", () => { if ($("intro").classList.contains("hidden")) showBar(); });
+// Browsers only allow sound after a tap/click
+addEventListener("pointerdown", () => Sfx.unlock(), { capture: true });
+addEventListener("keydown", () => Sfx.unlock(), { capture: true });
+
+// ---------------------------------------------------------------- Poke the face
+let taps = [];
+$("head").addEventListener("click", (e) => e.stopPropagation());   // tapping the face doesn't open the menu
+$("head").addEventListener("pointerdown", (e) => {
+  if (!$("intro").classList.contains("hidden")) return;
+  e.stopPropagation();
+  const now = performance.now(), r = $("head").getBoundingClientRect();
+  const dx = clamp((e.clientX - (r.left + r.width / 2)) / (r.width / 2), -1, 1);
+  const dy = clamp((e.clientY - (r.top + r.height / 2)) / (r.height / 2), -1, 1);
+  if (!reducedMotion) { P.vx -= dx * 5; P.vy -= dy * 5; squash = { axis: Math.abs(dx) > Math.abs(dy) ? "x" : "y", side: Math.abs(dx) > Math.abs(dy) ? -Math.sign(dx) : -Math.sign(dy), a: 0.25 }; }
+  taps = taps.filter((t) => now - t < 6000); taps.push(now);
+  if (sleeping || forceNap) { forceNap = false; parkedSince = null; }      // poking wakes it up
+  if (taps.length >= 7) {
+    playAct([["furious", 1600]], 2, now); burst("poke", pick(["HEY!!", "STOP IT!", "GRR!"]), 50, 16); Sfx.play("hmph"); taps = [];
+  } else if (taps.length >= 4) {
+    playAct([["annoyed", 1200]], 2, now); burst("poke small", pick(["hey…", "ahem", "quit it"]), 50, 18); Sfx.play("hmph");
+  } else if (Math.random() < 0.6) {
+    playAct([["giggle", 900]], 2, now); Sfx.play("giggle");
+  } else {
+    playAct([["winking", 900]], 2, now); Sfx.play("poke");
+  }
+});
 $("debugToggle").onclick = () => toggleDebug();
 function toggleDebug() { debugOn = !debugOn; $("debug").classList.toggle("hidden", !debugOn); $("debugToggle").classList.toggle("on", debugOn); }
 
@@ -428,6 +592,10 @@ $("simBtn").onclick = () => { $("intro").classList.add("hidden"); setSim(true); 
 $("simToggle").onclick = () => setSim(!simOn);
 $("calBtn").onclick = () => motion.calibrate();
 $("relearnBtn").onclick = () => motion.relearnForward();
+$("forgetBtn").onclick = () => motion.forgetCalibration();
+function soundLabel() { $("soundBtn").textContent = Sfx.isOn() ? "Sound on" : "Sound off"; $("soundBtn").classList.toggle("on", Sfx.isOn()); }
+$("soundBtn").onclick = () => { Sfx.setOn(!Sfx.isOn()); soundLabel(); if (Sfx.isOn()) Sfx.play("ding"); };
+soundLabel();
 
 // ---------------------------------------------------------------- Simulator
 // A tiny car model: speed, longitudinal accel, yaw rate, and road noise.
@@ -511,6 +679,17 @@ document.querySelectorAll("#sim .hold").forEach((b) => {
 $("bumpBtn").onclick = () => { replay = null; sim.bump = true; };
 $("replayBtn").onclick = startReplay;
 $("speedBtn").onclick = () => { sim.mult = sim.mult === 1 ? 4 : 1; $("speedBtn").textContent = sim.mult + "×"; };
+$("cruiseBtn").onclick = () => {      // pretend we've been cruising smoothly for a while
+  replay = null; sim.keys = {}; sim.speed = Math.max(sim.speed, 25); lastEventAt = performance.now() - COOL_MS + 1500;
+  setStatus("Highway test — cruising smoothly… sunglasses in a moment. Any brake/turn knocks them off.");
+};
+$("sickBtn").onclick = () => { const now = performance.now(); turnTimes = []; getSick(now); };
+$("idleBtn").onclick = () => { nextIdleAt = 0; act = null; reactionUntil = 0; };
+$("nightBtn").onclick = () => {
+  nightForced = nightForced === null ? true : nightForced ? false : null;
+  $("nightBtn").textContent = "Night: " + (nightForced === null ? "auto" : nightForced ? "on" : "off");
+  updateNight();
+};
 $("napBtn").onclick = () => { replay = null; sim.keys = {}; sim.speed = 0; sim.fwd = 0; motion.resetSim();
   state = { ...state, fwd: 0, lat: 0, yaw: 0, activity: 0, event: "cruising" }; reactionUntil = 0; forceNap = true; };
 
