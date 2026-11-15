@@ -19,23 +19,24 @@
   const FILL = "%8&$#B", EDGE = ":;!|/\\()", WHITE = "*-+";
   const CHARS = FILL + EDGE + WHITE;
   const NF = FILL.length, NE = EDGE.length;
-  // matched colours (from the drawing)…
-  const PALETTE = ["#C9813A", "#A9682C", "#8E5524", "#E0A060", "#FFF8EE", "#6B3F1C", "#E86F7E", "#B57434", "#D99447"];
-  // …and how each one is shown: brighter, so the characters glow on the black screen
-  const SHOW =    ["#F5A54E", "#C9742A", "#B86A2A", "#FFC27A", "#FFFFFF", "#7A4318", "#FF8C9A", "#E0913E", "#FFB45C"];
-  const CREAM = 4, INKLINE = 5;
+  // Default palette (the dog): [colour in the drawing, how it is shown — brighter, so it glows on black]
+  const DOG_PALETTE = { colors: [["#C9813A", "#F5A54E"], ["#A9682C", "#C9742A"], ["#8E5524", "#B86A2A"], ["#E0A060", "#FFC27A"],
+                                 ["#E86F7E", "#FF8C9A"], ["#B57434", "#E0913E"], ["#D99447", "#FFB45C"]], white: "#FFFFFF", ink: "#7A4318" };
   const SUB = 3;                       // samples per cell, each direction
   const CHAR_ASPECT = 1.62;            // cell height / width
   const hash = (i) => { const s = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return s - Math.floor(s); };
 
   // color → nearest palette entry, via a 16x16x16 lookup table
-  const PAL_RGB = PALETTE.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
-  const LUT = new Uint8Array(4096);
-  for (let i = 0; i < 4096; i++) {
-    const r = ((i >> 8) & 15) * 17, g = ((i >> 4) & 15) * 17, b = (i & 15) * 17;
-    let best = 0, bd = 1e9;
-    PAL_RGB.forEach(([R, G, B], k) => { if (k === CREAM) return; const d = (r - R) ** 2 + (g - G) ** 2 + (b - B) ** 2; if (d < bd) { bd = d; best = k; } });
-    LUT[i] = best;
+  function buildLut(colors) {
+    const rgb = colors.map(([h]) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
+    const lut = new Uint8Array(4096);
+    for (let i = 0; i < 4096; i++) {
+      const r = ((i >> 8) & 15) * 17, g = ((i >> 4) & 15) * 17, b = (i & 15) * 17;
+      let best = 0, bd = 1e9;
+      rgb.forEach(([R, G, B], k) => { const d = (r - R) ** 2 + (g - G) ** 2 + (b - B) ** 2; if (d < bd) { bd = d; best = k; } });
+      lut[i] = best;
+    }
+    return lut;
   }
 
   class AsciiRenderer {
@@ -47,10 +48,19 @@
       this.atlas = document.createElement("canvas");
       this.boil = 0; this.lastBoil = 0;
       this.chars = null; this.colors = null;
+      this.setPalette(DOG_PALETTE);
+    }
+
+    // Each buddy brings its own colours. Call layout() afterwards to rebuild the glyphs.
+    setPalette(p) {
+      this.show = p.colors.map((c) => c[1]).concat([p.white || "#FFFFFF", p.ink || "#555555"]);
+      this.CREAM = p.colors.length; this.INKLINE = p.colors.length + 1;
+      this.lut = buildLut(p.colors);
     }
 
     layout(cssW, cssH) {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (!(cssW > 8 && cssH > 8)) { this.chars = null; return; }       // hidden or squeezed to nothing: draw nothing
       this.cssW = cssW; this.cssH = cssH; this.dpr = dpr;
       this.cellW = cssW / this.cols; this.cellH = this.cellW * CHAR_ASPECT;
       this.rows = Math.max(1, Math.floor(cssH / this.cellH));
@@ -61,11 +71,11 @@
       // glyph atlas: one row per palette color, one column per character
       const gw = Math.ceil(this.cellW * dpr), gh = Math.ceil(this.cellH * dpr);
       this.gw = gw; this.gh = gh;
-      this.atlas.width = gw * CHARS.length; this.atlas.height = gh * PALETTE.length;
+      this.atlas.width = gw * CHARS.length; this.atlas.height = gh * this.show.length;
       const a = this.atlas.getContext("2d");
       a.font = `800 ${Math.round(gh * 0.98)}px ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace`;
       a.textAlign = "center"; a.textBaseline = "middle";
-      SHOW.forEach((col, r) => {
+      this.show.forEach((col, r) => {
         a.fillStyle = col;
         for (let c = 0; c < CHARS.length; c++) {          // drawn twice, a hair apart, for bolder strokes
           a.fillText(CHARS[c], c * gw + gw / 2, r * gh + gh * 0.55);
@@ -87,7 +97,7 @@
       const px = o.getImageData(0, 0, W, H).data;
 
       if (now - this.lastBoil > 280) { this.boil++; this.lastBoil = now; }   // a gentle shimmer, like redrawn lines
-      const cols = this.cols, rows = this.rows;
+      const cols = this.cols, rows = this.rows, CREAM = this.CREAM, INKLINE = this.INKLINE, LUT = this.lut;
       for (let cy = 0; cy < rows; cy++) {
         for (let cx = 0; cx < cols; cx++) {
           let nDark = 0, nWhite = 0, nFur = 0, r = 0, g = 0, b = 0;
@@ -128,6 +138,7 @@
 
     // "Drawing" mode: the dog itself, smooth
     renderPlain(drawFn, vb) {
+      if (!this.chars) return;
       const c = this.ctx, dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       const w = Math.round(this.cssW * dpr), h = Math.round(this.cssH * dpr);
       if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
@@ -157,7 +168,7 @@
     constructor(canvas, ascii) { this.cv = canvas; this.ctx = canvas.getContext("2d"); this.a = ascii; this.active = false; }
 
     start(rect, onDone, onRebuild) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);   // tumbling pieces don't need to be razor sharp
       this.dpr = dpr; this.W = innerWidth; this.H = innerHeight;
       this.cv.width = Math.round(this.W * dpr); this.cv.height = Math.round(this.H * dpr);
       const k = rect.width / this.a.cssW;                    // the head may be scaled by physics

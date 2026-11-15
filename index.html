@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <title>Car Buddy</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="art/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="art/icon-192.png">
 <style>
   :root { color-scheme: dark; --ui: rgba(20,20,20,.88); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -19,6 +21,8 @@
   #head { position: relative; width: min(94vw, calc(94vh * 1.439)); aspect-ratio: 1820 / 1265; will-change: transform; }
   #head.crumbled { visibility: hidden; }
   #pile { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+  #sky { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; transition: opacity 2s; }  /* weather, lights, notes, hearts */
+  body.night #sky { opacity: .6; }
   #squish { width: 100%; height: 100%; will-change: transform; }
   #squish canvas { width: 100% !important; height: 100% !important; display: block; }
 
@@ -41,7 +45,7 @@
   /* Carsick green tint */
   #squish canvas { transition: filter 1.2s; }
   body.sick #squish canvas { filter: sepia(1) hue-rotate(50deg) saturate(3.2) brightness(1.05); }
-  #head { cursor: pointer; }
+  #head { cursor: pointer; touch-action: none; }      /* so a finger can scratch without the page scrolling */
 
   /* Dizzy stars orbiting above the head */
   #stars { position: absolute; left: 50%; top: -2%; width: 46%; height: 16%; transform: translateX(-50%);
@@ -109,8 +113,19 @@
   #debug { left: 8px; bottom: 8px; font: 12px/1.35 ui-monospace, monospace; color: #9f9; padding: 8px 10px; white-space: pre; pointer-events: none; }
 
   /* Simulator open: shrink the stage so the panels don't cover the play area */
-  body.simmode #stage { inset: 64px 0 220px 0; }
-  body.simmode #head { width: min(70vw, calc((100vh - 380px) * 1.439)); }
+  body.simmode #stage { inset: var(--top, 64px) 0 var(--bot, 220px) 0; }
+  body.simmode #head { width: min(70vw, max(110px, calc((100vh - var(--top, 64px) - var(--bot, 220px) - 40px) * 1.439))); }
+  /* Short screens (a phone on its side): compact buttons that flow into as few rows as possible */
+  @media (max-height: 520px) {
+    .panel { padding: 5px; }
+    #bar button, #sim button { padding: 6px 9px; margin: 2px; font-size: 13px; border-radius: 8px; }
+    #sim { display: flex; flex-wrap: wrap; justify-content: center; width: 98vw; bottom: 4px; }
+    #sim .row { display: contents; }
+    #sim .hold { min-width: 0; padding: 6px 9px; }
+    #sim .hint { display: none; }
+    #bar { top: 4px; left: 4px; }
+    #status { flex-basis: 100%; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     #stage.shake { animation: none; } #shift { transition: opacity 2s; } #stars span { animation: none; }
@@ -133,6 +148,7 @@
       <div id="stars"><span>★</span><span>★</span><span>★</span></div></div>
   </div></div>
   <canvas id="pile" aria-hidden="true"></canvas>
+  <canvas id="sky" aria-hidden="true"></canvas>
   <div id="fx"><svg id="crack" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
   <div id="intro" class="panel">
@@ -151,7 +167,12 @@
     <button id="relearnBtn">Re-learn forward</button>
     <button id="forgetBtn">Reset calibration</button>
     <button id="soundBtn">Sound on</button>
+    <button id="buddyBtn">Buddy: Dog</button>
     <button id="styleBtn">Style: ASCII</button>
+    <button id="earsBtn">Ears: off</button>
+    <button id="wxBtn">Weather: auto</button>
+    <button id="hatBtn">Santa hat: auto</button>
+    <button id="buzzBtn">Buzz on</button>
     <button id="simToggle">Simulator</button>
     <button id="debugToggle">Debug</button>
     <button id="hideBtn">Hide</button>
@@ -183,13 +204,22 @@
       <button id="idleBtn">Idle bit</button>
       <button id="nightBtn">Night: auto</button>
     </div>
-    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug · H hide/show controls · tap the face to poke it</div>
+    <div class="row">
+      <button id="rollBtn">Roll over</button>
+      <button id="speakBtn">Speak</button>
+      <button id="danceBtn">Dance</button>
+      <button id="singBtn">Sing test</button>
+    </div>
+    <div class="hint">Keys: ↑ gas · ↓ brake · ← → turn · hold Shift for the dramatic version · Space bump · R replay · D debug · H hide/show controls · O roll over · B next buddy · tap the face to poke it, tap the nose to boop, rub to scratch</div>
   </div>
 
   <div id="debug" class="panel hidden"></div>
 
 <script src="js/dog-paths.js"></script>
 <script src="js/dog.js"></script>
+<script src="js/buddies.js"></script>
+<script src="js/sky.js"></script>
+<script src="js/senses.js"></script>
 <script src="js/ascii.js"></script>
 <script src="js/motion.js"></script>
 <script src="js/sfx.js"></script>
@@ -200,21 +230,59 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// ---------------------------------------------------------------- The dog
-// Drawn from Ibaad's own artwork (js/dog.js). Shown as live colored ASCII by default,
-// or as the plain drawing ("Style" in the menu, remembered on this device).
+// ---------------------------------------------------------------- The buddy
+// The dog is drawn from Ibaad's own artwork (js/dog.js); the other buddies live in js/buddies.js.
+// Shown as live colored ASCII by default, or as the plain drawing ("Style" in the menu).
+// Choices (buddy, style, hat, weather, ears, buzz) are remembered on this device.
+const store = Senses.store;
 const STYLE_KEY = "carbuddy.style";
-let style = "ascii";
-try { style = localStorage.getItem(STYLE_KEY) || "ascii"; } catch (err) { /* ignore */ }
+let style = store.get(STYLE_KEY, "ascii");
+let buddy = Buddies.get(store.get("carbuddy.buddy", "dog"));
 const faceCanvas = document.createElement("canvas");
-faceCanvas.setAttribute("role", "img"); faceCanvas.setAttribute("aria-label", "Car Buddy, a golden retriever");
+faceCanvas.setAttribute("role", "img"); faceCanvas.setAttribute("aria-label", "Car Buddy, " + buddy.label);
 $("squish").appendChild(faceCanvas);
 const ascii = new AsciiRenderer(faceCanvas, { cols: 72 });
+ascii.setPalette(buddy.palette);
 const crumble = new Crumble($("pile"), ascii);
-const pose = { eyes: "open", mouth: null, earL: 0, earR: 0, spin: 0 };
+const sky = Sky.create($("sky"));
+const pose = { eyes: "open", mouth: null, sing: 0, earL: 0, earR: 0, spin: 0, t: 0, hat: false };
+const drawBuddy = (c) => Buddies.draw(c, buddy, pose);
 const EARS = { L: 0, vL: 0, R: 0, vR: 0 };
 let blinkUntil = 0, nextBlink = performance.now() + 3000, lastAscii = 0;
-function layoutFace() { ascii.layout($("head").offsetWidth, $("head").offsetHeight); lastAscii = 0; }
+function layoutFace() { ascii.layout($("head").offsetWidth, $("head").offsetHeight); lastAscii = 0; placeShades(); }
+
+// Sunglasses sit over whichever buddy's eyes (the lenses are 48% of the glasses apart)
+function placeShades() {
+  const a = Buddies.point(buddy, buddy.eyes[0], pose.hat), b = Buddies.point(buddy, buddy.eyes[1], pose.hat);
+  const w = Math.max((b.x - a.x) / 0.48, 0.3) * 100, el = $("shades");
+  el.style.width = w.toFixed(1) + "%";
+  el.style.left = (((a.x + b.x) / 2) * 100 - w / 2).toFixed(1) + "%";
+  el.style.top = (((a.y + b.y) / 2) * 100 - w * 0.252 + 2).toFixed(1) + "%";
+}
+
+function setBuddy(id, announce) {
+  if (crumble.active) return;
+  buddy = Buddies.get(id); store.set("carbuddy.buddy", buddy.id);
+  ascii.setPalette(buddy.palette); layoutFace();
+  faceCanvas.setAttribute("aria-label", "Car Buddy, " + buddy.label);
+  $("buddyBtn").textContent = "Buddy: " + buddy.name;
+  if (announce) {
+    burst("back", "POOF!", 50, 20); Sfx.play("poof");
+    if (!reducedMotion) squash = { axis: "z", side: 1, a: 0.6 };
+    playAct([["happy", 900]], 2, performance.now());
+  }
+}
+function nextBuddy() { const l = Buddies.list; setBuddy(l[(l.indexOf(buddy) + 1) % l.length].id, true); }
+
+// Santa hat + string of lights: automatic from late November through December, or forced on/off
+let hatMode = store.get("carbuddy.hat", "auto");
+function inSeason() { const d = new Date(), m = d.getMonth(); return m === 11 || (m === 10 && d.getDate() >= 25); }
+function updateFestive() {
+  const on = hatMode === "on" || (hatMode === "auto" && inSeason());
+  if (pose.hat !== on) { pose.hat = on; placeShades(); }
+  sky.setFestive(on);
+  $("hatBtn").textContent = "Santa hat: " + hatMode;
+}
 
 // Which expression for which moment (easy to tweak)
 const LOOK = {
@@ -263,6 +331,8 @@ let parkedSince = null, sleeping = false, wakeUntil = 0, lastEvent = "cruising",
 let act = null, actGaze = null;       // a short scripted sequence that overrides the face
 let cool = false, sickUntil = 0, turnTimes = [], nextIdleAt = performance.now() + 20000;
 let night = false, nightForced = null, nextSnoreAt = 0;
+let roll = null, danceUntil = 0, shiverUntil = 0;      // tricks
+let wxKind = null;                                     // current weather effect
 const isSick = (now) => now < sickUntil;
 
 // Play a sequence of [expression, ms, gaze]. Higher prio wins: 1 idle · 2 poke/sick · 3 crash
@@ -389,9 +459,13 @@ function physics(s, dt, now) {
   const fromYaw = s.yaw / PHYS.yawToWall, fromLat = -s.lat / PHYS.latToWall;
   const T = {
     x: (Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat)  // left turn → thrown right
-       + (isSick(now) ? 0.18 * Math.sin(now / 380) : 0),               // carsick: woozy sway
+       + (isSick(now) ? 0.18 * Math.sin(now / 380) : 0)                // carsick: woozy sway
+       + push.x                                                        // leaning into a scratch
+       + (singing ? 0.14 * Math.sin(now / 450) : 0)                    // swaying to the music
+       + (now < danceUntil ? 0.55 * Math.sin(now / 120) : 0) + (now < shiverUntil ? 0.05 * Math.sin(now / 20) : 0)
+       + (wxKind === "windy" ? sky.wind * 0.08 : 0),
     z: -s.fwd / PHYS.fwdToWall,                                    // braking → thrown at the glass
-    y: (P.z > 0.97 && s.fwd < -0.8) ? 0.7 : 0,                     // squashed on the glass → slide down
+    y: ((P.z > 0.97 && s.fwd < -0.8) ? 0.7 : 0) + push.y,          // squashed on the glass → slide down
   };
   for (const a of ["x", "y", "z"]) {
     const v = "v" + a;
@@ -428,6 +502,7 @@ function crash(axis, side, speed, now) {
   const pos = { side: [side > 0 ? 80 : 20, 45], top: [50, 14], glass: [50, 42], back: [50, 72] }[kind];
   burst(kind, pick(CRASH_WORDS[kind]), pos[0], pos[1]);
   Sfx.play(CRASH_SOUND[kind]);
+  Senses.haptic.buzz(kind === "glass" ? [70, 40, 70] : kind === "back" ? 20 : 45);
   if (kind === "side") onEventStart("TURNING LEFT", now);   // slamming counts toward carsick
 
   if (kind !== "back") {
@@ -491,15 +566,15 @@ function startCrumble(now) {
   if (crumble.active || !ascii.chars) return;
   crumble.start(faceCanvas.getBoundingClientRect(),
     () => { $("head").classList.remove("crumbled"); playAct([["happy", 900]], 2, performance.now()); },
-    () => Sfx.play("rebuild"));
+    () => { Sfx.play("rebuild"); Senses.haptic.buzz(30); });
   $("head").classList.add("crumbled");
   burst("top", pick(["KRSSHH!", "CLATTER!", "OOPS!"]), 50, 18);
-  Sfx.play("crumble");
+  Sfx.play("crumble"); Senses.haptic.buzz([15, 35, 15, 35, 15, 35, 15, 35, 15]);
 }
 function styleLabel() { $("styleBtn").textContent = "Style: " + (style === "ascii" ? "ASCII" : "Drawing"); }
 $("styleBtn").onclick = () => {
   style = style === "ascii" ? "drawing" : "ascii";
-  try { localStorage.setItem(STYLE_KEY, style); } catch (err) { /* ignore */ }
+  store.set(STYLE_KEY, style);
   styleLabel(); layoutFace();
 };
 styleLabel();
@@ -509,6 +584,7 @@ let state = { fwd: 0, lat: 0, yaw: 0, event: "cruising", activity: 0, ready: fal
 let lastFrame = performance.now();
 
 function frame(now) {
+  requestAnimationFrame(frame);                          // first, so one bad frame can't stop the show
   const dt = Math.min(0.033, (now - lastFrame) / 1000); lastFrame = now;
   const s = state;
 
@@ -520,19 +596,44 @@ function frame(now) {
   lastEvent = s.event;
 
   // Personality: sunglasses on a long smooth drive, carsick wears off, idle bits
-  if (!cool && !sleeping && !isSick(now) && s.ready && !DRIVING[s.event] && s.activity > 0.35 && now - lastEventAt > COOL_MS) setCool(true);
+  const coolAfter = wxKind === "sunny" ? COOL_MS / 2 : COOL_MS;      // sunny day → shades come out sooner
+  if (!cool && !sleeping && !isSick(now) && s.ready && !DRIVING[s.event] && s.activity > 0.35 && now - lastEventAt > coolAfter) setCool(true);
   if (sickUntil && !isSick(now)) { sickUntil = 0; document.body.classList.remove("sick"); }
   if (now > nextIdleAt) {
     const calm = !act && !sleeping && !cool && now > reactionUntil && now > wakeUntil && !DRIVING[s.event];
-    if (calm) playAct(pick(night || isSick(now) ? NIGHT_BITS : IDLE_BITS), 1, now);
+    if (calm) {
+      if (wxKind === "snowy" && Math.random() < 0.3) {                 // brrr
+        playAct([["scared", 1400]], 1, now); burst("back small", "BRRR!", 50, 16);
+        if (!reducedMotion) shiverUntil = now + 1400;
+      } else if (pose.hat && Math.random() < 0.25) { playAct([["happy", 1300]], 1, now); Sfx.play("jingle"); }
+      else playAct(pick(night || isSick(now) ? NIGHT_BITS : IDLE_BITS), 1, now);
+    }
     nextIdleAt = now + 18000 + Math.random() * 17000;
+  }
+  // Senses: a finger scratching, and music in the microphone
+  const scratching = scratchFrame(now, dt);
+  const ear = ears.update(now, dt);
+  singing = ear.singing && !sleeping && !crumble.active;
+  if (singing && ear.beat) {
+    if (!reducedMotion) P.vy -= 2.4;                                   // bob on the beat
+    const r = $("head").getBoundingClientRect(), m = Buddies.point(buddy, buddy.mouth, pose.hat);
+    sky.emit(pick(["♪", "♫", "♪"]), r.left + r.width * (m.x + (Math.random() - 0.5) * 0.3), r.top + r.height * m.y - 10,
+      { color: pick(["#FFD23F", "#6CF2FF", "#FF7AD9", "#9BE7A8"]), vx: (Math.random() - 0.3) * 120, vy: -90 - Math.random() * 70, life: 1.6 });
   }
   physics(s, dt, now);
 
+  // Roll over: one full spin with a hop
+  let rollDeg = 0, hop = 0;
+  if (roll) {
+    const t = (now - roll.t0) / roll.dur;
+    if (t >= 1) roll = null;
+    else { const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; rollDeg = 360 * e * roll.dir; hop = -Math.sin(Math.PI * t) * $("head").offsetHeight * 0.16; }
+  }
+
   const scale = P.z >= 0 ? 1 + 0.5 * P.z : 1 + 0.38 * P.z;      // glass → huge, seat → tiny
-  const rot = P.x * 9 + clamp(P.vx, -4, 4) * 2.5;
+  const rot = P.x * 9 + clamp(P.vx, -4, 4) * 2.5 + rollDeg + (scratching && !reducedMotion ? Math.sin(now / 55) * 1.5 : 0);
   $("head").style.transform =
-    `translate(${(P.x * travel.x).toFixed(1)}px, ${(P.y * travel.y).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
+    `translate(${(P.x * travel.x).toFixed(1)}px, ${(P.y * travel.y + hop).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
 
   let sx = 1, sy = 1, origin = "50% 50%";
   const a = squash.a;
@@ -548,36 +649,42 @@ function frame(now) {
   const expr = decide(s, now);
 
   // The dog: mood → eyes/mouth, a blink now and then, ears that swing with the motion
-  const m = Dog.MOOD[expr] || Dog.MOOD.neutral;
+  let m = Dog.MOOD[expr] || Dog.MOOD.neutral;
+  const busy = act && act.prio >= 3;                                  // mid-crash: nothing overrides that
+  if (scratching && !busy) m = Dog.MOOD["in-love"];
+  else if (singing && !busy && !(act && act.prio >= 2) && !DRIVING[s.event] && now > reactionUntil) m = { eyes: "happy", mouth: "sing" };
   if (now > nextBlink) { blinkUntil = now + 140; nextBlink = now + 2500 + Math.random() * 4000; }
   pose.eyes = now < blinkUntil && (m.eyes === "open" || m.eyes === "wide") ? "closed" : m.eyes;
   pose.mouth = m.mouth || null;
-  pose.spin = now / 1000;
+  pose.sing = ear.open;
+  pose.spin = pose.t = now / 1000;
   shown = expr;
   // Ears lag behind the head: it moves right → they swing left, it drops → they lift.
   if (!reducedMotion) {
     const sway = Math.sin(now / 900) * 2;
-    const tL = clamp(-P.vx * 7 + P.vy * 6, -25, 50) + sway, tR = clamp(P.vx * 7 + P.vy * 6, -25, 50) - sway;
+    const perk = (scratching ? 22 : 0) + (singing ? 8 + ear.open * 14 : 0), blow = wxKind === "windy" ? sky.wind * 20 : 0;
+    const tL = clamp(-P.vx * 7 + P.vy * 6, -25, 50) + sway + perk - blow, tR = clamp(P.vx * 7 + P.vy * 6, -25, 50) - sway + perk + blow;
     EARS.vL += (60 * (tL - EARS.L) - 6 * EARS.vL) * dt; EARS.L += EARS.vL * dt;
     EARS.vR += (60 * (tR - EARS.R) - 6 * EARS.vR) * dt; EARS.R += EARS.vR * dt;
     pose.earL = clamp(EARS.L, -30, 70); pose.earR = clamp(EARS.R, -30, 70);
   }
   if (crumble.active) crumble.frame(dt, faceCanvas.getBoundingClientRect());
   else if (style === "ascii") {
-    if (now - lastAscii > 33) { ascii.render((c) => Dog.draw(c, pose), Dog.viewBox, now); lastAscii = now; }   // ~30 fps is plenty for text
-  } else ascii.renderPlain((c) => Dog.draw(c, pose), Dog.viewBox);
+    if (now - lastAscii > 33) { ascii.render(drawBuddy, Buddies.viewBox, now); lastAscii = now; }   // ~30 fps is plenty for text
+  } else ascii.renderPlain(drawBuddy, Buddies.viewBox);
+  sky.frame(dt, now);
 
   if (debugOn) {
     $("debug").textContent =
       `event  ${s.event}\nface   ${shown}\nfwd    ${s.fwd.toFixed(2)} m/s²\nlat    ${s.lat.toFixed(2)} m/s²\n` +
       `yaw    ${s.yaw.toFixed(1)} °/s\nhead   x ${P.x.toFixed(2)} y ${P.y.toFixed(2)} z ${P.z.toFixed(2)}\n` +
       `activ  ${s.activity.toFixed(2)}\nparked ${parkedSince == null ? "-" : ((now - parkedSince) / 1000).toFixed(0) + "s"}\n` +
-      `mood   ${[cool && "cool", isSick(now) && "carsick", sleeping && "asleep", night && "night", act && "act:" + act.prio].filter(Boolean).join(" ") || "-"}\n` +
+      `mood   ${[cool && "cool", isSick(now) && "carsick", sleeping && "asleep", night && "night", scratching && "scratch", singing && "singing", act && "act:" + act.prio].filter(Boolean).join(" ") || "-"}\n` +
+      `senses ears ${ears.mode()}${ears.isFaking() ? " (test)" : ""} · weather ${wxKind || "-"} · hat ${pose.hat ? "on" : "off"}\n` +
       `calm   ${((now - lastEventAt) / 1000).toFixed(0)}s (shades at ${COOL_MS / 1000}s)` +
       (simOn ? `\nspeed  ${(sim.speed * 3.6).toFixed(0)} km/h` : "") +
       (replay ? `\nreplay ${replay.t.toFixed(1)}s / ${replay.end.toFixed(0)}s` : "");
   }
-  requestAnimationFrame(frame);
 }
 
 // Slow pixel shift so the static parts don't burn into the OLED screen
@@ -612,7 +719,13 @@ function setControls(open) {
   if (open) $("toast").classList.add("hidden");
   clearTimeout(hideTimer);
   if (open && !simOn) hideTimer = setTimeout(() => setControls(false), 8000);
-  requestAnimationFrame(measure);
+  requestAnimationFrame(() => {                       // keep the buddy in the gap between the two panels
+    if (open && simOn) {
+      document.body.style.setProperty("--top", Math.round($("bar").getBoundingClientRect().bottom + 4) + "px");
+      document.body.style.setProperty("--bot", Math.round(innerHeight - $("sim").getBoundingClientRect().top + 4) + "px");
+    }
+    measure();
+  });
 }
 function showBar() { setControls(true); }
 $("menuBtn").onclick = (e) => { e.stopPropagation(); setControls(!controlsOpen); };
@@ -622,30 +735,84 @@ $("bar").addEventListener("pointerdown", () => { if (!simOn) { clearTimeout(hide
 addEventListener("pointerdown", () => Sfx.unlock(), { capture: true });
 addEventListener("keydown", () => Sfx.unlock(), { capture: true });
 
-// ---------------------------------------------------------------- Poke the face
-let taps = [];
+// ---------------------------------------------------------------- Touch: poke, boop, scratch
+// A quick tap pokes (or boops the nose). Rubbing a finger around scratches: he leans into it,
+// the phone buzzes under your finger, hearts float up, and after a few seconds his leg starts thumping.
+let taps = [], touch = null, scratchT = 0, lastHeart = 0, lastPurr = 0, lastThump = 0, thumpSide = 1, blissSaid = false;
+let singing = false;
+const push = { x: 0, y: 0 };
+function wake() { if (sleeping || forceNap) { forceNap = false; parkedSince = null; } }
+
 $("head").addEventListener("click", (e) => e.stopPropagation());   // tapping the face doesn't open the menu
 $("head").addEventListener("pointerdown", (e) => {
   if (!$("intro").classList.contains("hidden")) return;
   e.stopPropagation();
-  const now = performance.now(), r = $("head").getBoundingClientRect();
-  const dx = clamp((e.clientX - (r.left + r.width / 2)) / (r.width / 2), -1, 1);
-  const dy = clamp((e.clientY - (r.top + r.height / 2)) / (r.height / 2), -1, 1);
+  try { $("head").setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  const now = performance.now();
+  touch = { id: e.pointerId, t0: now, x: e.clientX, y: e.clientY, dist: 0, buzz: 0, scratching: false, lastMove: now };
+});
+$("head").addEventListener("pointermove", (e) => {
+  if (!touch || e.pointerId !== touch.id) return;
+  const d = Math.hypot(e.clientX - touch.x, e.clientY - touch.y), now = performance.now();
+  touch.x = e.clientX; touch.y = e.clientY; touch.dist += d; touch.buzz += d;
+  if (d > 0.5) touch.lastMove = now;
+  if (!touch.scratching && touch.dist > 24) { touch.scratching = true; wake(); }
+  if (touch.scratching && touch.buzz > 14) { touch.buzz = 0; Senses.haptic.buzz(scratchT > 2.5 ? 14 : 8); }   // a tick for every bit of rubbing
+});
+function endTouch(e) {
+  if (!touch || e.pointerId !== touch.id) return;
+  const t = touch, now = performance.now();
+  touch = null;
+  if (t.scratching) playAct([["happy", 900]], 2, now);               // afterglow
+  else if (e.type === "pointerup") poke(t.x, t.y, now);
+}
+$("head").addEventListener("pointerup", endTouch);
+$("head").addEventListener("pointercancel", endTouch);
+
+// Runs every frame; true while a finger is actively scratching
+function scratchFrame(now, dt) {
+  const active = !!(touch && touch.scratching && now - touch.lastMove < 400);
+  if (!active) {
+    scratchT = Math.max(0, scratchT - dt * 2); push.x = push.y = 0;
+    if (scratchT === 0) blissSaid = false;
+    return false;
+  }
+  scratchT += dt;
+  const r = $("head").getBoundingClientRect();
+  push.x = clamp((touch.x - (r.left + r.width / 2)) / (r.width / 2), -1, 1) * 0.22;    // lean into the finger
+  push.y = clamp((touch.y - (r.top + r.height / 2)) / (r.height / 2), -1, 1) * 0.18;
+  if (now - lastHeart > 330) { lastHeart = now; sky.emit("♥", touch.x + (Math.random() - 0.5) * 40, touch.y - 24, { color: pick(["#FF6B9A", "#FF8FB3", "#FF4D6D"]) }); }
+  if (now - lastPurr > 430) { lastPurr = now; Sfx.play("purr"); }
+  if (scratchT > 2.5) {                                              // the good spot: leg thump
+    if (!blissSaid) { blissSaid = true; burst("poke small", pick(["RIGHT THERE!", "AHHH…", "DON'T STOP!", "OH YEAH!"]), 50, 16); }
+    if (now - lastThump > 190) {
+      lastThump = now; thumpSide = -thumpSide;
+      if (!reducedMotion) { P.vy += 1.6; EARS.vL += 140 * thumpSide; EARS.vR -= 140 * thumpSide; }
+      Sfx.play("thump"); Senses.haptic.buzz(22);
+    }
+  }
+  return true;
+}
+
+function poke(x, y, now) {
+  const r = $("head").getBoundingClientRect();
+  const dx = clamp((x - (r.left + r.width / 2)) / (r.width / 2), -1, 1);
+  const dy = clamp((y - (r.top + r.height / 2)) / (r.height / 2), -1, 1);
   if (!reducedMotion) { P.vx -= dx * 5; P.vy -= dy * 5; squash = { axis: Math.abs(dx) > Math.abs(dy) ? "x" : "y", side: Math.abs(dx) > Math.abs(dy) ? -Math.sign(dx) : -Math.sign(dy), a: 0.25 }; }
   // BOOP: tapping the nose gets its own reaction
-  const nx = (e.clientX - r.left) / r.width, ny = (e.clientY - r.top) / r.height;
-  const n = Dog.nose, vb = Dog.viewBox;
-  const noseX = (n.x - vb.x) / vb.w, noseY = (n.y - vb.y) / vb.h;
-  if (Math.hypot(nx - noseX, (ny - noseY) * (r.height / r.width)) < 0.1) {
+  const nx = (x - r.left) / r.width, ny = (y - r.top) / r.height;
+  const n = Buddies.point(buddy, buddy.nose, pose.hat);
+  if (Math.hypot(nx - n.x, (ny - n.y) * (r.height / r.width)) < 0.1 * n.k) {
     if (!reducedMotion) { squash = { axis: "z", side: 1, a: 0.6 }; P.vz -= 3; }
-    if (sleeping || forceNap) { forceNap = false; parkedSince = null; }
+    wake();
     playAct([["giggle", 500], ["winking", 600]], 2, now);
-    burst("poke", "BOOP!", (e.clientX / innerWidth) * 100, Math.max(8, (e.clientY / innerHeight) * 100 - 14));
-    Sfx.play("boop");
+    burst("poke", "BOOP!", (x / innerWidth) * 100, Math.max(8, (y / innerHeight) * 100 - 14));
+    Sfx.play("boop"); Senses.haptic.buzz(28);
     return;
   }
+  Senses.haptic.buzz(12);
   taps = taps.filter((t) => now - t < 6000); taps.push(now);
-  if (sleeping || forceNap) { forceNap = false; parkedSince = null; }      // poking wakes it up
+  wake();                                                             // poking wakes it up
   if (taps.length >= 7) {
     playAct([["furious", 1600]], 2, now); burst("poke", pick(["HEY!!", "STOP IT!", "GRR!"]), 50, 16); Sfx.play("hmph"); taps = [];
   } else if (taps.length >= 4) {
@@ -655,7 +822,81 @@ $("head").addEventListener("pointerdown", (e) => {
   } else {
     playAct([["winking", 900]], 2, now); Sfx.play("poke");
   }
-});
+}
+
+// ---------------------------------------------------------------- Tricks (voice commands, or the simulator buttons)
+function rollOver() {
+  const now = performance.now();
+  wake(); if (cool) setCool(false, true);
+  burst("back", pick(["ROLL!", "WHEEE!", "TA-DA!"]), 50, 18); Sfx.play("wheee"); Senses.haptic.buzz([20, 60, 20]);
+  playAct([["happy", 1000], ["flustered", 500], ["happy", 700]], 2, now);
+  if (!reducedMotion && !roll) roll = { t0: now, dur: 1000, dir: Math.random() < 0.5 ? 1 : -1 };
+}
+function speak() {
+  wake();
+  burst("poke", buddy.say.word, 50, 16); Sfx.play(buddy.say.sound); Senses.haptic.buzz(40);
+  playAct([["wow", 700], ["happy", 500]], 2, performance.now());
+}
+function love() {
+  const now = performance.now(), r = $("head").getBoundingClientRect();
+  wake(); playAct([["in-love", 1800]], 2, now); Sfx.play("giggle");
+  for (let i = 0; i < 6; i++) sky.emit("♥", r.left + r.width * (0.2 + Math.random() * 0.6), r.top + r.height * (0.2 + Math.random() * 0.4), { color: "#FF6B9A", life: 1.8 });
+}
+function dance() {
+  const now = performance.now();
+  wake(); playAct([["happy", 1800]], 2, now); Sfx.play("giggle");
+  if (!reducedMotion) danceUntil = now + 1800;
+}
+function nap() { reactionUntil = 0; forceNap = true; }
+function wakeUp() { if (sleeping || forceNap) wake(); else { wakeUntil = performance.now() + WAKE_MS; Sfx.play("ding"); } }
+
+const COMMANDS = [
+  [/roll\s?over|rollover|\broll\b/, rollOver],
+  [/\bspeak\b|\bbark\b|say something/, speak],
+  [/good (boy|girl|dog|job|buddy)|love you|so cute/, love],
+  [/\bdance\b|\bshake\b|\bwiggle\b/, dance],
+  [/go to sleep|nap ?time|night night|bed ?time/, nap],
+  [/wake up|wakey/, wakeUp],
+];
+// Called with whatever speech recognition heard; returns true if it was a command
+function heard(text, fresh) {
+  if (!fresh) return false;
+  for (const [re, fn] of COMMANDS) if (re.test(text)) { setStatus("Heard “" + text.slice(-40) + "”", "ok"); fn(); return true; }
+  return false;
+}
+
+// ---------------------------------------------------------------- Ears, weather, hat, buzz (menu)
+const EAR_MODES = ["off", "music", "voice"];
+let earsWanted = store.get("carbuddy.ears", "off");
+const ears = Senses.createEars({ onHeard: heard, onStatus: setStatus, onMode: (m) => { $("earsBtn").textContent = "Ears: " + m; $("earsBtn").classList.toggle("on", m !== "off"); } });
+$("earsBtn").onclick = async () => {
+  earsWanted = EAR_MODES[(EAR_MODES.indexOf(ears.mode()) + 1) % EAR_MODES.length];
+  store.set("carbuddy.ears", earsWanted);
+  await ears.setMode(earsWanted);
+};
+
+const WX_MODES = ["auto", "sunny", "windy", "rainy", "snowy", "off"];
+let wxMode = store.get("carbuddy.weather", "auto");
+// ask = may show the location permission prompt. Otherwise only if it was already allowed.
+async function refreshWeather(ask) {
+  $("wxBtn").textContent = "Weather: " + wxMode;
+  if (wxMode !== "auto") { wxKind = wxMode === "off" ? null : wxMode; sky.setWeather(wxKind); return; }
+  if (!ask) {
+    try { if ((await navigator.permissions.query({ name: "geolocation" })).state !== "granted") return; } catch (err) { return; }
+  }
+  try { const w = await Senses.weather(); if (wxMode !== "auto") return; wxKind = w.kind; sky.setWeather(wxKind); setStatus("Weather: " + w.label, "ok"); }
+  catch (err) { if (wxMode !== "auto") return; wxKind = null; sky.setWeather(null); if (ask) setStatus("Weather: " + err.message + ".", "warn"); }
+}
+$("wxBtn").onclick = () => { wxMode = WX_MODES[(WX_MODES.indexOf(wxMode) + 1) % WX_MODES.length]; store.set("carbuddy.weather", wxMode); if (wxMode === "auto") { wxKind = null; sky.setWeather(null); } refreshWeather(true); };
+setInterval(() => refreshWeather(false), 20 * 60000);
+
+$("hatBtn").onclick = () => { hatMode = { auto: "on", on: "off", off: "auto" }[hatMode]; store.set("carbuddy.hat", hatMode); updateFestive(); if (pose.hat) Sfx.play("jingle"); };
+setInterval(updateFestive, 3600000);
+$("buddyBtn").onclick = nextBuddy;
+function buzzLabel() { const h = Senses.haptic; $("buzzBtn").textContent = !h.supported ? "Buzz: not on this device" : h.isOn() ? "Buzz on" : "Buzz off"; $("buzzBtn").classList.toggle("on", h.supported && h.isOn()); }
+$("buzzBtn").onclick = () => { Senses.haptic.setOn(!Senses.haptic.isOn()); buzzLabel(); Senses.haptic.buzz(40); };
+buzzLabel();
+
 $("debugToggle").onclick = () => toggleDebug();
 function toggleDebug() { debugOn = !debugOn; $("debug").classList.toggle("hidden", !debugOn); $("debugToggle").classList.toggle("on", debugOn); }
 
@@ -666,8 +907,10 @@ $("carBtn").onclick = async () => {
   try { await document.documentElement.requestFullscreen(); } catch (e) { /* optional */ }
   setTimeout(measure, 300);
   await motion.startSensors();
+  refreshWeather(true);                                  // asks for location the first time
+  if (earsWanted !== "off") ears.setMode(earsWanted);    // remembered microphone choice
 };
-function enterSim() { $("intro").classList.add("hidden"); $("menuBtn").classList.remove("hidden"); setSim(true); }
+function enterSim() { $("intro").classList.add("hidden"); $("menuBtn").classList.remove("hidden"); setSim(true); refreshWeather(false); }
 $("simBtn").onclick = enterSim;
 $("simToggle").onclick = () => setSim(!simOn);
 $("calBtn").onclick = () => motion.calibrate();
@@ -767,6 +1010,10 @@ $("nightBtn").onclick = () => {
   $("nightBtn").textContent = "Night: " + (nightForced === null ? "auto" : nightForced ? "on" : "off");
   updateNight();
 };
+$("rollBtn").onclick = rollOver;
+$("speakBtn").onclick = speak;
+$("danceBtn").onclick = dance;
+$("singBtn").onclick = () => { ears.fake(!ears.isFaking()); $("singBtn").classList.toggle("on", ears.isFaking()); setStatus(ears.isFaking() ? "Sing test — pretending music is playing." : "Sing test off."); };
 $("napBtn").onclick = () => { replay = null; sim.keys = {}; sim.speed = 0; sim.fwd = 0; motion.resetSim();
   state = { ...state, fwd: 0, lat: 0, yaw: 0, activity: 0, event: "cruising" }; reactionUntil = 0; forceNap = true; };
 
@@ -778,6 +1025,8 @@ addEventListener("keydown", (e) => {
   if (!simOn) { if (e.key === "s" || e.key === "S") enterSim(); return; }
   if (e.key === " ") { e.preventDefault(); replay = null; sim.bump = true; return; }
   if (e.key === "r" || e.key === "R") return startReplay();
+  if (e.key === "o" || e.key === "O") return rollOver();
+  if (e.key === "b" || e.key === "B") return nextBuddy();
   const m = KEYMAP[e.key];
   if (m) { e.preventDefault(); replay = null; sim.keys[m[e.shiftKey ? 1 : 0]] = true; }
 });
@@ -786,6 +1035,11 @@ addEventListener("keyup", (e) => {
   if (m) { sim.keys[m[0]] = false; sim.keys[m[1]] = false; }
 });
 
+// Works without signal after the first visit, and can be added to the home screen
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+setBuddy(buddy.id, false);
+updateFestive();
+refreshWeather(false);
 if (new URLSearchParams(location.search).has("sim")) enterSim();
 measure();
 requestAnimationFrame(frame);
