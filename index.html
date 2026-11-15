@@ -16,7 +16,9 @@
   #shift { position: fixed; inset: 0; transition: transform 30s linear, opacity 2s; }
   body.night #shift { opacity: .55; }                 /* night mode: dimmer */
   #stage { position: absolute; inset: 0; display: grid; place-items: center; }
-  #head { position: relative; width: 74vmin; aspect-ratio: 1; will-change: transform; }
+  #head { position: relative; width: min(94vw, calc(94vh * 1.439)); aspect-ratio: 1820 / 1265; will-change: transform; }
+  #head.crumbled { visibility: hidden; }
+  #pile { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
   #squish { width: 100%; height: 100%; will-change: transform; }
   #squish canvas { width: 100% !important; height: 100% !important; display: block; }
 
@@ -31,7 +33,7 @@
   }
 
   /* Sunglasses (long smooth cruise) */
-  #shades { position: absolute; left: 10%; top: 34%; width: 80%; pointer-events: none; opacity: 0;
+  #shades { position: absolute; left: 22%; top: 16.5%; width: 55.6%; pointer-events: none; opacity: 0;
             transform: translateY(-180%) rotate(-10deg);
             transition: transform .5s cubic-bezier(.3, 1.6, .5, 1), opacity .2s; }
   #shades.on { opacity: 1; transform: none; }
@@ -108,7 +110,7 @@
 
   /* Simulator open: shrink the stage so the panels don't cover the play area */
   body.simmode #stage { inset: 64px 0 220px 0; }
-  body.simmode #head { width: min(60vw, calc(100vh - 380px)); }
+  body.simmode #head { width: min(70vw, calc((100vh - 380px) * 1.439)); }
 
   @media (prefers-reduced-motion: reduce) {
     #stage.shake { animation: none; } #shift { transition: opacity 2s; } #stars span { animation: none; }
@@ -130,6 +132,7 @@
       </svg>
       <div id="stars"><span>★</span><span>★</span><span>★</span></div></div>
   </div></div>
+  <canvas id="pile" aria-hidden="true"></canvas>
   <div id="fx"><svg id="crack" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
   <div id="intro" class="panel">
@@ -148,6 +151,7 @@
     <button id="relearnBtn">Re-learn forward</button>
     <button id="forgetBtn">Reset calibration</button>
     <button id="soundBtn">Sound on</button>
+    <button id="styleBtn">Style: ASCII</button>
     <button id="simToggle">Simulator</button>
     <button id="debugToggle">Debug</button>
     <button id="hideBtn">Hide</button>
@@ -184,8 +188,9 @@
 
   <div id="debug" class="panel hidden"></div>
 
-<script src="vendor/fabric-1.7.22.min.js"></script>
-<script src="vendor/kaia-face.min.js"></script>
+<script src="js/dog-paths.js"></script>
+<script src="js/dog.js"></script>
+<script src="js/ascii.js"></script>
 <script src="js/motion.js"></script>
 <script src="js/sfx.js"></script>
 <script>
@@ -195,19 +200,21 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// ---------------------------------------------------------------- Face
-// Performance: kaia-face repaints its whole canvas every frame, and Fabric multiplies the
-// canvas by the screen's pixel ratio. Size the canvas to the head and cap the ratio at 1.5.
-fabric.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-const px = Math.round(Math.min(700, $("head").getBoundingClientRect().width || 400));
-const face = new Face({ boundTo: "#squish", face_width: px, face_height: px });
-const ALL = ["annoyed","anxious","apologetic","awkward","blinking","bored","crying","default","determined",
-  "embarrased","evil","excited","exhausted","flustered","furious","giggle","happy","in-love","mischievous",
-  "realized-something","sad","sassy","scared","shocked","snoozing","starstruck","stuck-up","thinking",
-  "tired","upset","winking","wow"];
-ALL.forEach((e) => face.setGazeSpeed(e, 70, "linear"));
-face.setAnimation("*", "blinking", { enabled: true, "average-delay": 3500, scaleY: 0.12, duration: 120,
-  elements: ["left-eye", "right-eye"], easing: "easeInOutQuad" });
+// ---------------------------------------------------------------- The dog
+// Drawn from Ibaad's own artwork (js/dog.js). Shown as live colored ASCII by default,
+// or as the plain drawing ("Style" in the menu, remembered on this device).
+const STYLE_KEY = "carbuddy.style";
+let style = "ascii";
+try { style = localStorage.getItem(STYLE_KEY) || "ascii"; } catch (err) { /* ignore */ }
+const faceCanvas = document.createElement("canvas");
+faceCanvas.setAttribute("role", "img"); faceCanvas.setAttribute("aria-label", "Car Buddy, a golden retriever");
+$("squish").appendChild(faceCanvas);
+const ascii = new AsciiRenderer(faceCanvas, { cols: 72 });
+const crumble = new Crumble($("pile"), ascii);
+const pose = { eyes: "open", mouth: null, earL: 0, earR: 0, spin: 0 };
+const EARS = { L: 0, vL: 0, R: 0, vR: 0 };
+let blinkUntil = 0, nextBlink = performance.now() + 3000, lastAscii = 0;
+function layoutFace() { ascii.layout($("head").offsetWidth, $("head").offsetHeight); lastAscii = 0; }
 
 // Which expression for which moment (easy to tweak)
 const LOOK = {
@@ -370,9 +377,10 @@ let travel = { x: 100, y: 60 };
 let lastFx = 0;
 
 function measure() {
-  const st = $("stage").getBoundingClientRect(), hd = $("head").offsetWidth;
-  travel.x = Math.max((st.width - hd) / 2, hd * 0.18);
-  travel.y = Math.max((st.height - hd) / 2, hd * 0.12);
+  const st = $("stage").getBoundingClientRect(), hw = $("head").offsetWidth, hh = $("head").offsetHeight;
+  travel.x = Math.max((st.width - hw) / 2, hw * 0.18);
+  travel.y = Math.max((st.height - hh) / 2, hh * 0.12);
+  layoutFace();
 }
 addEventListener("resize", measure);
 
@@ -478,16 +486,37 @@ function drawCrack() {
   drawCrack.timer = setTimeout(() => { svg.classList.add("fade"); svg.classList.remove("on"); }, 1300);
 }
 
+// ---------------------------------------------------------------- Speed-bump crumble (ASCII mode)
+function startCrumble(now) {
+  if (crumble.active || !ascii.chars) return;
+  crumble.start(faceCanvas.getBoundingClientRect(),
+    () => { $("head").classList.remove("crumbled"); playAct([["happy", 900]], 2, performance.now()); },
+    () => Sfx.play("rebuild"));
+  $("head").classList.add("crumbled");
+  burst("top", pick(["KRSSHH!", "CLATTER!", "OOPS!"]), 50, 18);
+  Sfx.play("crumble");
+}
+function styleLabel() { $("styleBtn").textContent = "Style: " + (style === "ascii" ? "ASCII" : "Drawing"); }
+$("styleBtn").onclick = () => {
+  style = style === "ascii" ? "drawing" : "ascii";
+  try { localStorage.setItem(STYLE_KEY, style); } catch (err) { /* ignore */ }
+  styleLabel(); layoutFace();
+};
+styleLabel();
+
 // ---------------------------------------------------------------- Render loop
 let state = { fwd: 0, lat: 0, yaw: 0, event: "cruising", activity: 0, ready: false };
-let gazeX = 0.5, gazeY = 0.5, gsX = 0.5, gsY = 0.5, lastGazeAt = 0, lastFrame = performance.now();
+let lastFrame = performance.now();
 
 function frame(now) {
   const dt = Math.min(0.033, (now - lastFrame) / 1000); lastFrame = now;
   const s = state;
 
   if (s.event !== lastEvent) onEventStart(s.event, now);
-  if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) P.vy -= PHYS.bumpKick;
+  if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) {
+    if (style === "ascii") startCrumble(now);            // the characters fall apart into a pile
+    else { P.vy -= PHYS.bumpKick; EARS.vL += 260; EARS.vR += 260; }
+  }
   lastEvent = s.event;
 
   // Personality: sunglasses on a long smooth drive, carsick wears off, idle bits
@@ -518,19 +547,25 @@ function frame(now) {
 
   const expr = decide(s, now);
 
-  // Eyes look into the turn; up when accelerating, down when braking.
-  // Smoothed + rate-limited: each call restarts kaia's eye animation.
-  const kg = 1 - Math.exp(-dt / 0.4);
-  gsX += kg * ((0.5 - clamp(s.yaw / 60, -0.3, 0.3)) - gsX);
-  gsY += kg * ((0.5 - clamp(s.fwd * 0.08, -0.25, 0.25)) - gsY);
-  let gx = +gsX.toFixed(2), gy = +gsY.toFixed(2);
-  if (actGaze) { gx = actGaze[0]; gy = actGaze[1]; }       // scripted glances
-  if ((actGaze ? now - lastGazeAt > 100 : now - lastGazeAt > 300) && (Math.abs(gx - gazeX) > 0.04 || Math.abs(gy - gazeY) > 0.04)) {
-    try { face.setGazeDirection(gx, gy); gazeX = gx; gazeY = gy; lastGazeAt = now; } catch (err) { /* loading */ }
+  // The dog: mood → eyes/mouth, a blink now and then, ears that swing with the motion
+  const m = Dog.MOOD[expr] || Dog.MOOD.neutral;
+  if (now > nextBlink) { blinkUntil = now + 140; nextBlink = now + 2500 + Math.random() * 4000; }
+  pose.eyes = now < blinkUntil && (m.eyes === "open" || m.eyes === "wide") ? "closed" : m.eyes;
+  pose.mouth = m.mouth || null;
+  pose.spin = now / 1000;
+  shown = expr;
+  // Ears lag behind the head: it moves right → they swing left, it drops → they lift.
+  if (!reducedMotion) {
+    const sway = Math.sin(now / 900) * 2;
+    const tL = clamp(-P.vx * 7 + P.vy * 6, -25, 50) + sway, tR = clamp(P.vx * 7 + P.vy * 6, -25, 50) - sway;
+    EARS.vL += (60 * (tL - EARS.L) - 6 * EARS.vL) * dt; EARS.L += EARS.vL * dt;
+    EARS.vR += (60 * (tR - EARS.R) - 6 * EARS.vR) * dt; EARS.R += EARS.vR * dt;
+    pose.earL = clamp(EARS.L, -30, 70); pose.earR = clamp(EARS.R, -30, 70);
   }
-
-  // kaia-face loads its images asynchronously; until then calls throw, so just retry next frame
-  if (expr !== shown) { try { face.setExpression(expr); shown = expr; } catch (err) { /* still loading */ } }
+  if (crumble.active) crumble.frame(dt, faceCanvas.getBoundingClientRect());
+  else if (style === "ascii") {
+    if (now - lastAscii > 33) { ascii.render((c) => Dog.draw(c, pose), Dog.viewBox, now); lastAscii = now; }   // ~30 fps is plenty for text
+  } else ascii.renderPlain((c) => Dog.draw(c, pose), Dog.viewBox);
 
   if (debugOn) {
     $("debug").textContent =
@@ -597,6 +632,18 @@ $("head").addEventListener("pointerdown", (e) => {
   const dx = clamp((e.clientX - (r.left + r.width / 2)) / (r.width / 2), -1, 1);
   const dy = clamp((e.clientY - (r.top + r.height / 2)) / (r.height / 2), -1, 1);
   if (!reducedMotion) { P.vx -= dx * 5; P.vy -= dy * 5; squash = { axis: Math.abs(dx) > Math.abs(dy) ? "x" : "y", side: Math.abs(dx) > Math.abs(dy) ? -Math.sign(dx) : -Math.sign(dy), a: 0.25 }; }
+  // BOOP: tapping the nose gets its own reaction
+  const nx = (e.clientX - r.left) / r.width, ny = (e.clientY - r.top) / r.height;
+  const n = Dog.nose, vb = Dog.viewBox;
+  const noseX = (n.x - vb.x) / vb.w, noseY = (n.y - vb.y) / vb.h;
+  if (Math.hypot(nx - noseX, (ny - noseY) * (r.height / r.width)) < 0.1) {
+    if (!reducedMotion) { squash = { axis: "z", side: 1, a: 0.6 }; P.vz -= 3; }
+    if (sleeping || forceNap) { forceNap = false; parkedSince = null; }
+    playAct([["giggle", 500], ["winking", 600]], 2, now);
+    burst("poke", "BOOP!", (e.clientX / innerWidth) * 100, Math.max(8, (e.clientY / innerHeight) * 100 - 14));
+    Sfx.play("boop");
+    return;
+  }
   taps = taps.filter((t) => now - t < 6000); taps.push(now);
   if (sleeping || forceNap) { forceNap = false; parkedSince = null; }      // poking wakes it up
   if (taps.length >= 7) {

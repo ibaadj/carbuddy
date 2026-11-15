@@ -1,6 +1,6 @@
 /* Car Buddy sound effects — synthesized with the Web Audio API (no audio files).
  *   Sfx.unlock()      call from a tap/click (browsers only allow audio after a gesture)
- *   Sfx.play("bonk")  bonk clonk splat wheee giggle poke hmph ding snore blegh cool
+ *   Sfx.play("bonk")  bonk clonk splat wheee giggle poke hmph ding snore blegh cool crumble rebuild boop
  *   Sfx.setOn(bool)   remembered on this device
  */
 (function () {
@@ -68,6 +68,10 @@
     ding()  { tone("sine", 1320, 1320, 0.7, 0.35); tone("sine", 1980, 1980, 0.45, 0.15, 0.02); },
     snore() { noise(1.3, 260, 1.5, 0.18, 0, 0.5); },
     blegh() { tone("sawtooth", 240, 85, 0.6, 0.35, 0, { vib: [11, 25], lp: 1100 }); },
+    // speed-bump crumble: a clatter of little pieces, then a rising "zip" as they fly back
+    crumble() { for (let i = 0; i < 14; i++) { const d = i * 0.045 + Math.random() * 0.03; noise(0.05, 1800 + Math.random() * 2500, 4, 0.35 * (1 - i / 16), d); tone("triangle", 900 + Math.random() * 900, 400, 0.05, 0.12, d); } },
+    rebuild() { tone("sine", 300, 1500, 0.6, 0.25, 0, { attack: 0.08 }); [0.55, 0.65, 0.75].forEach((d, i) => tone("sine", 1500 + i * 300, 1500 + i * 300, 0.12, 0.12, d)); },
+    boop()  { tone("sine", 700, 260, 0.16, 0.5); tone("sine", 1050, 1050, 0.08, 0.15, 0.12); },
     cool()  { tone("sine", 1300, 480, 0.35, 0.25, 0, { attack: 0.02 }); tone("square", 660, 660, 0.06, 0.08, 0.38, { lp: 2500 }); },
   };
 
