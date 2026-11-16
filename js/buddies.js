@@ -336,7 +336,54 @@
     },
   };
 
-  const list = [dog, ghost, santa, sasquatch, dumpling, radish];
+  // ---------------------------------------------------------------- Jellyfish (lives in the water tank)
+  const JELLY = "#E88BC4", JELLY_RIM = "#C766A8", JELLY_SPOT = "#F2B6DA", TENT = "#B48CF0", TENT2 = "#8FA8F5";
+  const jellyfish = {
+    id: "jellyfish", name: "Jellyfish", label: "a jellyfish underwater", water: true, fit: 0.9,
+    eyes: [{ x: 495, y: 400, r: 86 }, { x: 805, y: 400, r: 86 }],
+    nose: { x: 650, y: 470, r: 125 }, mouth: { x: 650, y: 545 },
+    hat: { x: 650, y: 92, w: 540, rot: -5 },
+    palette: { colors: [[JELLY, "#FF9AD5"], [JELLY_RIM, "#E070BC"], [JELLY_SPOT, "#FFD0EA"], [TENT, "#C4A2FF"], [TENT2, "#9FBBFF"], ["#FF7FA8", "#FF86B0"]], white: "#FFFFFF", ink: "#B0509A" },
+    say: { word: "BLUB!", sound: "blub" },
+    draw(ctx, pose) {
+      const t = pose.t || 0, pulse = Math.sin(t * 2.2);                 // the slow swimming pulse
+      const drag = ((pose.earL || 0) - (pose.earR || 0)) * 2.2;         // tentacles trail behind sideways motion…
+      const lift = ((pose.earL || 0) + (pose.earR || 0)) * 0.8;         // …and flare on bumps
+      const rimY = 640;
+      // tentacles first (behind the bell): thin ones, then two frilly arms
+      const tent = (x0, len, w, col, ph, frill) => {
+        ctx.beginPath(); ctx.moveTo(x0, rimY - 30);
+        const n = 9;
+        for (let k = 1; k <= n; k++) {
+          const f = k / n, wig = Math.sin(t * 2.4 + ph + f * 5) * (18 + 46 * f) * (frill ? 0.6 : 1);
+          ctx.lineTo(x0 + wig + drag * f * f + (x0 - CX) * 0.12 * f * (1 + pulse * 0.5 + lift * 0.02), rimY - 30 + (len - pulse * 26) * f);
+        }
+        stroke(ctx, col, w);
+      };
+      [[330, 470, 0.4], [470, 540, 1.7], [830, 540, 2.9], [970, 470, 4.2]].forEach(([x, len, ph], i) => tent(x, len, 30, i % 2 ? TENT2 : TENT, ph, false));
+      tent(580, 500, 58, JELLY_SPOT, 0.9, true); tent(720, 500, 58, JELLY_SPOT, 3.3, true);
+      tent(650, 420, 46, JELLY_RIM, 2.1, true);
+      // the bell, squeezing gently as it swims
+      ctx.save(); ctx.translate(CX, rimY); ctx.scale(1 + pulse * 0.035, 1 - pulse * 0.045); ctx.translate(-CX, -rimY);
+      const L = 215, R = 1085;
+      ctx.beginPath(); ctx.moveTo(L, rimY - 20);
+      ctx.bezierCurveTo(L - 10, 250, 380, 55, CX, 55); ctx.bezierCurveTo(920, 55, R + 10, 250, R, rimY - 20);
+      const n = 6, wv = (R - L) / n;                                     // scalloped skirt
+      for (let i = 0; i < n; i++) { const x1 = R - i * wv; ctx.quadraticCurveTo(x1 - wv / 2, rimY + 95, x1 - wv, rimY - 20); }
+      ctx.closePath(); ctx.fillStyle = JELLY; ctx.fill();
+      ctx.save(); ctx.clip();
+      oval(ctx, CX, rimY + 40, 470, 110, JELLY_RIM);                    // darker skirt band
+      oval(ctx, 400, 215, 58, 130, WHITE, rad(38));                     // shine
+      oval(ctx, 650, 150, 60, 34, JELLY_SPOT); oval(ctx, 820, 215, 44, 28, JELLY_SPOT, rad(30)); oval(ctx, 930, 330, 34, 24, JELLY_SPOT, rad(50));
+      ctx.restore();
+      oval(ctx, 365, 510, 64, 38, "#FF7FA8"); oval(ctx, 935, 510, 64, 38, "#FF7FA8");
+      eyes(ctx, this, pose, JELLY);
+      mouth(ctx, this.mouth, pose, 170);
+      ctx.restore();
+    },
+  };
+
+  const list = [dog, ghost, santa, sasquatch, dumpling, radish, jellyfish];
   list.forEach((b) => { b.palette = { colors: b.palette.colors.concat(HAT_COLORS), white: b.palette.white, ink: b.palette.ink }; });
 
   function hatOn(b, pose) { return !!(pose && pose.hat && b.hat); }

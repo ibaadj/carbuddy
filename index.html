@@ -23,6 +23,11 @@
   #pile { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
   #sky { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; transition: opacity 2s; }  /* weather, lights, notes, hearts */
   body.night #sky { opacity: .6; }
+  #water { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; transition: opacity 2s; }   /* the jellyfish's tank, behind everything */
+  body.night #water { opacity: .7; }
+  body.tank.night #shift { opacity: .9; }             /* at night the jellyfish glows instead of dimming */
+  body.tank.night #squish canvas { filter: drop-shadow(0 0 10px #ff9ad5) drop-shadow(0 0 26px #b48cf0) brightness(1.15); }
+  body.tank.night.sick #squish canvas { filter: sepia(1) hue-rotate(50deg) saturate(3.2) brightness(1.05); }
   #squish { width: 100%; height: 100%; will-change: transform; }
   #squish canvas { width: 100% !important; height: 100% !important; display: block; }
 
@@ -136,6 +141,7 @@
 </style>
 </head>
 <body>
+  <canvas id="water" aria-hidden="true"></canvas>
   <div id="shift"><div id="stage">
     <div id="head"><div id="squish"></div>
       <svg id="shades" viewBox="0 0 100 33" aria-hidden="true">
@@ -219,6 +225,7 @@
 <script src="js/dog.js"></script>
 <script src="js/buddies.js"></script>
 <script src="js/sky.js"></script>
+<script src="js/water.js"></script>
 <script src="js/senses.js"></script>
 <script src="js/ascii.js"></script>
 <script src="js/motion.js"></script>
@@ -245,6 +252,9 @@ const ascii = new AsciiRenderer(faceCanvas, { cols: 72 });
 ascii.setPalette(buddy.palette);
 const crumble = new Crumble($("pile"), ascii);
 const sky = Sky.create($("sky"));
+const water = Water.create($("water"));                 // only filled for buddies that live underwater
+const thrown = { x: 0, z: 0 };                          // which way the car is throwing things right now (for the water)
+let nextBubble = 0;
 const pose = { eyes: "open", mouth: null, sing: 0, earL: 0, earR: 0, spin: 0, t: 0, hat: false };
 const drawBuddy = (c) => Buddies.draw(c, buddy, pose);
 const EARS = { L: 0, vL: 0, R: 0, vR: 0 };
@@ -264,6 +274,7 @@ function setBuddy(id, announce) {
   if (crumble.active) return;
   buddy = Buddies.get(id); store.set("carbuddy.buddy", buddy.id);
   ascii.setPalette(buddy.palette); layoutFace();
+  water.setOn(!!buddy.water); document.body.classList.toggle("tank", !!buddy.water);
   faceCanvas.setAttribute("aria-label", "Car Buddy, " + buddy.label);
   $("buddyBtn").textContent = "Buddy: " + buddy.name;
   if (announce) {
@@ -455,8 +466,9 @@ function measure() {
 addEventListener("resize", measure);
 
 function physics(s, dt, now) {
-  if (reducedMotion) { P.x = P.y = P.z = 0; return; }
   const fromYaw = s.yaw / PHYS.yawToWall, fromLat = -s.lat / PHYS.latToWall;
+  thrown.x = Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat; thrown.z = -s.fwd / PHYS.fwdToWall;
+  if (reducedMotion) { P.x = P.y = P.z = 0; return; }
   const T = {
     x: (Math.abs(fromYaw) > Math.abs(fromLat) ? fromYaw : fromLat)  // left turn → thrown right
        + (isSick(now) ? 0.18 * Math.sin(now / 380) : 0)                // carsick: woozy sway
@@ -503,6 +515,11 @@ function crash(axis, side, speed, now) {
   burst(kind, pick(CRASH_WORDS[kind]), pos[0], pos[1]);
   Sfx.play(CRASH_SOUND[kind]);
   Senses.haptic.buzz(kind === "glass" ? [70, 40, 70] : kind === "back" ? 20 : 45);
+  if (water.isOn()) {                                    // hitting the tank wall makes a splash on that side
+    const r = $("head").getBoundingClientRect(), x = kind === "side" ? (side > 0 ? innerWidth * 0.93 : innerWidth * 0.07) : r.left + r.width / 2;
+    water.splash(x, 0.5 + strength * 0.5); water.bubbles(r.left + r.width / 2, r.top + r.height * 0.5, 8);
+    if (kind !== "back") Sfx.play("splash");
+  }
   if (kind === "side") onEventStart("TURNING LEFT", now);   // slamming counts toward carsick
 
   if (kind !== "back") {
@@ -590,6 +607,10 @@ function frame(now) {
 
   if (s.event !== lastEvent) onEventStart(s.event, now);
   if (s.event === "BUMP" && lastEvent !== "BUMP" && !reducedMotion) {
+    if (water.isOn()) {                                  // a bump throws water up right across the tank
+      for (let i = 1; i <= 4; i++) water.splash(innerWidth * (i / 5), 0.9);
+      Sfx.play("splash");
+    }
     if (style === "ascii") startCrumble(now);            // the characters fall apart into a pile
     else { P.vy -= PHYS.bumpKick; EARS.vL += 260; EARS.vR += 260; }
   }
@@ -673,6 +694,14 @@ function frame(now) {
     if (now - lastAscii > 33) { ascii.render(drawBuddy, Buddies.viewBox, now); lastAscii = now; }   // ~30 fps is plenty for text
   } else ascii.renderPlain(drawBuddy, Buddies.viewBox);
   sky.frame(dt, now);
+  if (water.isOn()) {
+    water.frame(dt, now, { side: thrown.x, fwd: thrown.z, ascii: style === "ascii" });
+    if (now > nextBubble && !crumble.active) {           // he breathes little bubbles; more when excited or singing
+      const r = $("head").getBoundingClientRect(), lively = singing || scratching || DRIVING[s.event];
+      water.bubbles(r.left + r.width * (0.3 + Math.random() * 0.4), r.top + r.height * 0.45, lively ? 2 : 1);
+      nextBubble = now + (lively ? 260 : 900 + Math.random() * 1400);
+    }
+  }
 
   if (debugOn) {
     $("debug").textContent =
@@ -835,6 +864,7 @@ function rollOver() {
 function speak() {
   wake();
   burst("poke", buddy.say.word, 50, 16); Sfx.play(buddy.say.sound); Senses.haptic.buzz(40);
+  if (water.isOn()) { const r = $("head").getBoundingClientRect(); water.bubbles(r.left + r.width / 2, r.top + r.height * 0.42, 14); }
   playAct([["wow", 700], ["happy", 500]], 2, performance.now());
 }
 function love() {

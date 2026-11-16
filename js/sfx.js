@@ -1,7 +1,7 @@
 /* Car Buddy sound effects — synthesized with the Web Audio API (no audio files).
  *   Sfx.unlock()      call from a tap/click (browsers only allow audio after a gesture)
  *   Sfx.play("bonk")  bonk clonk splat wheee giggle poke hmph ding snore blegh cool crumble rebuild boop
- *                     purr thump poof jingle woof boo hoho growl squeak
+ *                     purr thump poof jingle woof boo hoho growl squeak blub splash
  *   Sfx.setOn(bool)   remembered on this device
  */
 (function () {
@@ -82,6 +82,8 @@
     boo()   { tone("sine", 300, 620, 0.9, 0.3, 0, { vib: [6, 30], attack: 0.15 }); },
     hoho()  { [0, 0.26, 0.52].forEach((d, i) => tone("sawtooth", 150 - i * 14, 105 - i * 10, 0.2, 0.4, d, { lp: 800 })); },
     growl() { tone("sawtooth", 95, 60, 0.7, 0.45, 0, { vib: [30, 14], lp: 600, attack: 0.05 }); },
+    blub()  { [0, 0.11, 0.2, 0.33].forEach((d, i) => tone("sine", 300 + i * 90, 700 + i * 160, 0.09, 0.3, d)); },
+    splash() { noise(0.45, 1800, 0.6, 0.45, 0, 0.01); noise(0.3, 600, 0.8, 0.3, 0.05); tone("sine", 240, 90, 0.2, 0.25); },
     squeak() { tone("sine", 900, 1700, 0.09, 0.3); tone("sine", 1700, 1100, 0.1, 0.25, 0.09); },
     cool()  { tone("sine", 1300, 480, 0.35, 0.25, 0, { attack: 0.02 }); tone("square", 660, 660, 0.06, 0.08, 0.38, { lp: 2500 }); },
   };
