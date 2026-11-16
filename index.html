@@ -930,17 +930,38 @@ buzzLabel();
 $("debugToggle").onclick = () => toggleDebug();
 function toggleDebug() { debugOn = !debugOn; $("debug").classList.toggle("hidden", !debugOn); $("debugToggle").classList.toggle("on", debugOn); }
 
+// ---------------------------------------------------------------- Full screen, landscape
+// Browsers only allow full screen right after a tap, and drop it whenever the page reloads or you swipe
+// home. So in car mode, any tap brings it back (and he still reacts to the tap), with a hint when it's off.
+// Opened from the home-screen icon ("Add to Home screen") it starts full screen on its own.
+let carMode = false;
+const installed = () => matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+const isFull = () => !!document.fullscreenElement || installed();
+async function goFullscreen() {
+  if (!document.fullscreenElement && !installed() && document.documentElement.requestFullscreen) {
+    try { await document.documentElement.requestFullscreen({ navigationUI: "hide" }); } catch (e) { /* not allowed right now */ }
+  }
+  try { await screen.orientation.lock("landscape"); } catch (e) { /* only works in full screen, and not everywhere */ }
+  setTimeout(measure, 300);
+}
+document.addEventListener("pointerdown", () => { if (carMode && !isFull()) goFullscreen(); }, { capture: true });
+document.addEventListener("fullscreenchange", () => {
+  setTimeout(measure, 300);
+  if (carMode && !isFull()) setStatus("Tap anywhere for full screen.");
+});
+
 $("carBtn").onclick = async () => {
   $("intro").classList.add("hidden");
   $("menuBtn").classList.remove("hidden");
   setSim(false);
-  try { await document.documentElement.requestFullscreen(); } catch (e) { /* optional */ }
-  setTimeout(measure, 300);
+  carMode = true;
+  await goFullscreen();
+  if (!isFull()) setStatus("Tap anywhere for full screen.");
   await motion.startSensors();
   refreshWeather(true);                                  // asks for location the first time
   if (earsWanted !== "off") ears.setMode(earsWanted);    // remembered microphone choice
 };
-function enterSim() { $("intro").classList.add("hidden"); $("menuBtn").classList.remove("hidden"); setSim(true); refreshWeather(false); }
+function enterSim() { carMode = false; $("intro").classList.add("hidden"); $("menuBtn").classList.remove("hidden"); setSim(true); refreshWeather(false); }
 $("simBtn").onclick = enterSim;
 $("simToggle").onclick = () => setSim(!simOn);
 $("calBtn").onclick = () => motion.calibrate();
