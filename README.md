@@ -3,6 +3,11 @@
 A motion-reactive dashboard face for an old phone. Open https://ibaadj.github.io/carbuddy/
 
 - `/` — the face. **Car mode** uses the phone's sensors; **Simulator** works on any device (add `?sim` to the URL).
+- `/tank/` — **Fish tank**: a procedurally generated aquarium. Smooth driving fills a calm meter and brings new fish and critters
+  (snail, crab, shrimp, seahorse, jellyfish, octopus); hard braking, flooring it, sharp turns or jerky inputs send everyone
+  hiding behind the rocks until you've driven calmly for a bit. Nobody is ever lost. Biome changes daily (reef, kelp,
+  arctic in winter) and turns to deep sea at night. Tap a creature for its name, tap the water to feed. `?sim` for the simulator.
+- `js/tank.js` — the tank: scene generation, creatures (fish use boids flocking), driving reactions, saved on the phone.
 - `/sensors/` — the raw sensor test page (v3) for debugging and logging drives.
 - `js/motion.js` — motion engine: calibrates to the car (saved on the phone and reused), smooths,
   detects accelerate / brake / turn / bump, and re-calibrates by itself if the phone is moved.

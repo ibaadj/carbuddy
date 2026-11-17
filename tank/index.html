@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Car Buddy – Fish Tank</title>
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../art/icon-192.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #eaf6ff;
+               font: 14px/1.35 system-ui, sans-serif; touch-action: none; user-select: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #hud { position: fixed; left: 12px; top: 10px; display: flex; gap: 10px; align-items: center;
+         font-size: 13px; text-shadow: 0 1px 2px #000; pointer-events: none; }
+  #calm { width: 96px; height: 8px; border-radius: 4px; background: #ffffff2a; overflow: hidden; }
+  #calm i { display: block; height: 100%; width: 100%; background: #7fe0a8; transform-origin: left; transform: scaleX(0); transition: transform .4s; }
+  #mood { opacity: .85; }
+  #toast { position: fixed; left: 50%; top: 12px; transform: translate(-50%, -6px); max-width: 80vw; text-align: center;
+           background: #000b; padding: 7px 14px; border-radius: 16px; opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  button { font: inherit; padding: 10px 13px; border-radius: 11px; border: 0; background: #ffffff22; color: #fff; }
+  button.on, button.active { background: #2b6cff; }
+  button.primary { background: #2b6cff; }
+  button.warn { background: #8a2b2b; }
+  #menuBtn { position: fixed; right: 10px; top: 8px; width: 44px; height: 40px; padding: 0; font-size: 20px; background: #0006; }
+  #panel { position: fixed; right: 10px; top: 54px; width: 230px; max-height: calc(100% - 64px); overflow: auto;
+           display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 14px; background: #0b1220ee; }
+  #panel a { color: #9cc7ff; text-align: center; padding: 6px; }
+  #status { font-size: 12px; color: #b9c7d6; padding: 2px 2px 4px; }
+  #sim { position: fixed; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+         padding: 8px 8px max(8px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, #000a 40%); }
+  #sim button { padding: 9px 11px; background: #ffffff26; }
+  #debug { position: fixed; left: 10px; bottom: 64px; font: 11px/1.3 ui-monospace, monospace; white-space: pre;
+           background: #0008; padding: 6px 8px; border-radius: 8px; pointer-events: none; }
+  #intro { position: fixed; inset: 0; display: grid; place-items: center; background: #000c; padding: 20px; }
+  #intro .box { max-width: 460px; text-align: center; }
+  #intro h1 { margin: 0 0 6px; font-size: 24px; }
+  #intro p { margin: 0 0 14px; color: #c7d6e4; }
+  #intro button { margin: 4px; padding: 12px 18px; }
+  #intro a { display: block; margin-top: 12px; color: #9cc7ff; }
+  .hidden { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { #toast, #calm i { transition: none; } }
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="hud" class="hidden">
+    <span id="count">🐟 3</span>
+    <div id="calm" title="Calm meter"><i></i></div>
+    <span id="mood"></span>
+  </div>
+  <div id="toast"></div>
+  <div id="debug" class="hidden"></div>
+
+  <button id="menuBtn" class="hidden" aria-label="Menu">⋯</button>
+  <div id="panel" class="hidden">
+    <div id="status">—</div>
+    <button id="biomeBtn">Biome: Auto</button>
+    <button id="rerollBtn">Rearrange the tank</button>
+    <button id="simToggle">Simulator controls</button>
+    <button id="calBtn">Calibrate (parked)</button>
+    <button id="relearnBtn">Re-learn forward</button>
+    <button id="debugBtn">Show numbers</button>
+    <button id="resetBtn" class="warn">Start a new tank</button>
+    <a href="../">← Back to Car Buddy</a>
+  </div>
+
+  <div id="sim" class="hidden">
+    <button class="hold" data-k="gas">Gas</button>
+    <button class="hold" data-k="floor">Floor it</button>
+    <button class="hold" data-k="brake">Brake</button>
+    <button class="hold" data-k="hard">Hard brake</button>
+    <button class="hold" data-k="left">◀ Turn</button>
+    <button class="hold" data-k="sharpLeft">◀◀ Sharp</button>
+    <button class="hold" data-k="right">Turn ▶</button>
+    <button class="hold" data-k="sharpRight">Sharp ▶▶</button>
+    <button id="bumpBtn">Bump</button>
+    <button id="cruiseBtn">Cruise</button>
+    <button id="calmBtn">+1 min calm</button>
+  </div>
+
+  <div id="intro">
+    <div class="box">
+      <h1>Fish Tank</h1>
+      <p>Drive smoothly and your tank fills up with fish and other critters.
+         Brake hard, floor it or take a corner too fast and everyone hides behind the rocks
+         until things calm down. Nobody gets hurt.<br>Tap a creature to see its name, or tap the water to feed them.</p>
+      <button id="carBtn" class="primary">Car mode</button>
+      <button id="simBtn">Simulator</button>
+      <a href="../">← Back to Car Buddy</a>
+    </div>
+  </div>
+
+<script src="../js/motion.js"></script>
+<script src="../js/tank.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ---------------------------------------------------------------- toast + HUD
+let toastTimer = 0;
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3800);
+}
+let hudShown = 0, debugOn = false;
+function hud(h) {
+  const now = performance.now();
+  if (now - hudShown < 200) return;
+  hudShown = now;
+  $("count").textContent = "🐟 " + h.count;
+  $("calm").firstElementChild.style.transform = `scaleX(${clamp(h.calm, 0, 1)})`;
+  $("mood").textContent = h.stress > 0.5 ? "hiding…" : h.stress > 0.15 ? "nervous" : h.moving ? "calm" : "";
+  if (debugOn) {
+    $("debug").textContent =
+      `fwd    ${h.fwd.toFixed(2)}\nlat    ${h.lat.toFixed(2)}\njerk   ${h.jerk.toFixed(1)}\n` +
+      `stress ${h.stress.toFixed(2)}\nmoving ${h.moving ? "yes" : "no"}\nbiome  ${h.biome}`;
+  }
+}
+
+const tank = Tank.create($("c"), { onToast: toast, onHud: hud });
+$("biomeBtn").textContent = "Biome: " + tank.biomeLabel();
+
+// ---------------------------------------------------------------- motion engine
+let lastState = null, movingSince = 0, stillSince = 0, moving = false;
+function setStatus(msg) { $("status").textContent = msg; }
+const motion = CarMotion.create({
+  onState: (s) => {
+    lastState = s;
+    tank.drive(s);
+    if (!simOn) {
+      // moving = clearly driving; parked = quiet for a few seconds (with hysteresis)
+      const now = performance.now();
+      const active = (s.event !== "cruising" && s.event !== "learning") || s.activity > 0.35 || Math.abs(s.yaw) > 2;
+      if (active) { stillSince = 0; if (!moving) { movingSince = movingSince || now; if (now - movingSince > 1500) moving = true; } }
+      else { movingSince = 0; if (moving) { stillSince = stillSince || now; if (now - stillSince > 6000 && s.activity < 0.25) moving = false; } }
+      tank.setMoving(moving);
+    }
+  },
+  onStatus: (msg, kind) => { setStatus(msg); if (kind) toast(msg); },
+});
+
+// ---------------------------------------------------------------- menu
+let panelOpen = false;
+function setPanel(open) { panelOpen = open; $("panel").classList.toggle("hidden", !open); }
+$("menuBtn").onclick = (e) => { e.stopPropagation(); setPanel(!panelOpen); };
+$("biomeBtn").onclick = () => { $("biomeBtn").textContent = "Biome: " + tank.cycleBiome(); };
+$("rerollBtn").onclick = () => tank.reroll();
+$("calBtn").onclick = () => motion.calibrate();
+$("relearnBtn").onclick = () => motion.relearnForward();
+$("debugBtn").onclick = () => { debugOn = !debugOn; $("debug").classList.toggle("hidden", !debugOn); $("debugBtn").classList.toggle("on", debugOn); };
+let resetArmed = 0;
+$("resetBtn").onclick = () => {
+  if (performance.now() - resetArmed < 3000) { tank.reset(); resetArmed = 0; $("resetBtn").textContent = "Start a new tank"; return; }
+  resetArmed = performance.now(); $("resetBtn").textContent = "Tap again to confirm";
+  setTimeout(() => { $("resetBtn").textContent = "Start a new tank"; }, 3000);
+};
+
+// taps on the tank: tap a creature to see its name, tap the water to feed
+$("c").addEventListener("pointerdown", (e) => {
+  if (panelOpen) { setPanel(false); return; }
+  tank.tap(e.clientX, e.clientY);
+  if (carMode && !document.fullscreenElement) goFullscreen();
+});
+
+// ---------------------------------------------------------------- start
+let carMode = false, simOn = false;
+function begin() { $("intro").classList.add("hidden"); $("hud").classList.remove("hidden"); $("menuBtn").classList.remove("hidden"); }
+async function goFullscreen() {
+  try { await document.documentElement.requestFullscreen({ navigationUI: "hide" }); } catch (err) { /* optional */ }
+  try { await screen.orientation.lock("landscape"); } catch (err) { /* optional */ }
+}
+$("carBtn").onclick = async () => {
+  carMode = true; begin(); goFullscreen();
+  await motion.startSensors();
+};
+$("simBtn").onclick = () => { begin(); setSim(true); };
+$("simToggle").onclick = () => setSim(!simOn);
+
+// ---------------------------------------------------------------- simulator
+// Simple car: you choose the pushes directly, the engine sees them like real sensor data.
+const sim = { speed: 0, fwd: 0, lat: 0, keys: {}, bump: false, cruise: false, timer: null };
+function setSim(on) {
+  simOn = on;
+  $("sim").classList.toggle("hidden", !on);
+  $("simToggle").classList.toggle("on", on);
+  clearInterval(sim.timer); sim.timer = null;
+  $("c").style.height = on ? `calc(100% - ${$("sim").offsetHeight}px)` : "";     // keep the rocks above the buttons
+  if (on) {
+    motion.resetSim(); sim.speed = 0; sim.fwd = 0; sim.lat = 0;
+    sim.timer = setInterval(simTick, 16);
+    setStatus("Simulator — hold the buttons. Gentle inputs fill the calm meter; hard ones scare the fish.");
+  } else { tank.setMoving(false); setStatus("Car mode."); }
+}
+function simTick() {
+  const dt = 0.016, k = sim.keys;
+  const moving = sim.speed > 0.5;
+  let fT = moving && !sim.cruise ? -0.15 : 0;
+  if (k.gas) fT = 1.3;
+  if (k.floor) fT = 3.8;
+  if (k.brake) fT = moving ? -1.6 : 0;
+  if (k.hard) fT = moving ? -5 : 0;
+  if ((k.brake || k.hard) && sim.cruise) { sim.cruise = false; $("cruiseBtn").classList.remove("on"); }
+  sim.fwd += (fT - sim.fwd) * (1 - Math.exp(-dt / 0.18));
+  sim.speed = clamp(sim.speed + sim.fwd * dt, 0, 32);
+  if (sim.speed === 0 && sim.fwd < 0) sim.fwd = 0;
+
+  let lT = 0;                                            // sideways push: + right (a left turn pushes left)
+  if (k.left) lT -= 2.0; if (k.right) lT += 2.0;
+  if (k.sharpLeft) lT -= 5.2; if (k.sharpRight) lT += 5.2;
+  lT *= clamp(sim.speed / 6, 0, 1);
+  sim.lat += (lT - sim.lat) * (1 - Math.exp(-dt / 0.25));
+  const yaw = -sim.lat / Math.max(sim.speed, 2) * 57.3;
+
+  const rough = 0.05 + 0.25 * clamp(sim.speed / 10, 0, 1);
+  const n = () => (Math.random() * 2 - 1) * rough;
+  const vert = sim.bump ? 7 : n();
+  sim.bump = false;
+  motion.feed(sim.fwd + n(), sim.lat + n(), yaw + n() * 2, vert);
+  tank.setMoving(sim.speed > 1);
+}
+document.querySelectorAll("#sim .hold").forEach((b) => {
+  const key = b.dataset.k;
+  const down = (e) => { e.preventDefault(); e.stopPropagation(); sim.keys[key] = true; b.classList.add("active"); };
+  const up = () => { sim.keys[key] = false; b.classList.remove("active"); };
+  b.addEventListener("pointerdown", down);
+  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, up));
+});
+$("bumpBtn").onclick = () => { sim.bump = true; };
+$("cruiseBtn").onclick = () => {
+  sim.cruise = !sim.cruise; if (sim.cruise) sim.speed = Math.max(sim.speed, 25);
+  $("cruiseBtn").classList.toggle("on", sim.cruise);
+  if (sim.cruise) toast("Cruising smoothly… the calm meter is filling.");
+};
+$("calmBtn").onclick = () => tank.addCalm(60);
+if (location.search.includes("sim")) { begin(); setSim(true); }
+</script>
+</body>
+</html>
