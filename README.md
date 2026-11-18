@@ -3,10 +3,14 @@
 A motion-reactive dashboard face for an old phone. Open https://ibaadj.github.io/carbuddy/
 
 - `/` — the face. **Car mode** uses the phone's sensors; **Simulator** works on any device (add `?sim` to the URL).
-- `/tank/` — **Fish tank**: a procedurally generated aquarium. Smooth driving fills a calm meter and brings new fish and critters
-  (snail, crab, shrimp, seahorse, jellyfish, octopus); hard braking, flooring it, sharp turns or jerky inputs send everyone
-  hiding behind the rocks until you've driven calmly for a bit. Nobody is ever lost. Biome changes daily (reef, kelp,
-  arctic in winter) and turns to deep sea at night. Tap a creature for its name, tap the water to feed. `?sim` for the simulator.
+- `/tank/` — **Fish tank**: a procedurally generated aquarium, drawn at full screen resolution. Smooth driving fills a calm
+  meter that brings new creatures (fish, pufferfish, snail, crab, shrimp, seahorse, jellyfish, octopus; 8% are shiny), and a
+  long smooth streak throws a dance party (heart, conga line, spin). Gentle turns: "wheee!"; lots of turns: dizzy eyes;
+  bumps: "boing!". Harsh driving sends everyone hiding — puffers puff up, the octopus inks, crabs dig in, snails say nope.
+  Nobody is ever lost. Visitors drop by (turtle, whale, submarine). A rubber duck rides the slosh, a treasure chest burps
+  bubbles, and every tank has a surprise prop (sunken car, diver's helmet, castle, anchor). Biome changes daily (reef,
+  kelp, arctic in winter) and turns to deep sea at night; fish nap when you're parked. Tap a creature to say hi, tap the
+  water to feed, tap the duck or the chest. `?sim` for the simulator.
 - `js/tank.js` — the tank: scene generation, creatures (fish use boids flocking), driving reactions, saved on the phone.
 - `/sensors/` — the raw sensor test page (v3) for debugging and logging drives.
 - `js/motion.js` — motion engine: calibrates to the car (saved on the phone and reused), smooths,

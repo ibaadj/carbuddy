@@ -12,7 +12,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #eaf6ff;
                font: 14px/1.35 system-ui, sans-serif; touch-action: none; user-select: none; }
-  #c { position: fixed; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; }
   #hud { position: fixed; left: 12px; top: 10px; display: flex; gap: 10px; align-items: center;
          font-size: 13px; text-shadow: 0 1px 2px #000; pointer-events: none; }
   #calm { width: 96px; height: 8px; border-radius: 4px; background: #ffffff2a; overflow: hidden; }
@@ -52,6 +52,7 @@
     <span id="count">🐟 3</span>
     <div id="calm" title="Calm meter"><i></i></div>
     <span id="mood"></span>
+    <span id="streak"></span>
   </div>
   <div id="toast"></div>
   <div id="debug" class="hidden"></div>
@@ -59,6 +60,7 @@
   <button id="menuBtn" class="hidden" aria-label="Menu">⋯</button>
   <div id="panel" class="hidden">
     <div id="status">—</div>
+    <button id="soundBtn">Sound on</button>
     <button id="biomeBtn">Biome: Auto</button>
     <button id="rerollBtn">Rearrange the tank</button>
     <button id="simToggle">Simulator controls</button>
@@ -81,6 +83,8 @@
     <button id="bumpBtn">Bump</button>
     <button id="cruiseBtn">Cruise</button>
     <button id="calmBtn">+1 min calm</button>
+    <button id="partyBtn">Party</button>
+    <button id="visitBtn">Visitor</button>
   </div>
 
   <div id="intro">
@@ -88,13 +92,14 @@
       <h1>Fish Tank</h1>
       <p>Drive smoothly and your tank fills up with fish and other critters.
          Brake hard, floor it or take a corner too fast and everyone hides behind the rocks
-         until things calm down. Nobody gets hurt.<br>Tap a creature to see its name, or tap the water to feed them.</p>
+         until things calm down. Nobody gets hurt. Keep a smooth streak going for a dance party, and watch for visitors.<br>Tap a creature to say hi, tap the water to feed them, and try the duck and the treasure chest.</p>
       <button id="carBtn" class="primary">Car mode</button>
       <button id="simBtn">Simulator</button>
       <a href="../">← Back to Car Buddy</a>
     </div>
   </div>
 
+<script src="../js/sfx.js"></script>
 <script src="../js/motion.js"></script>
 <script src="../js/tank.js"></script>
 <script>
@@ -115,7 +120,9 @@ function hud(h) {
   hudShown = now;
   $("count").textContent = "🐟 " + h.count;
   $("calm").firstElementChild.style.transform = `scaleX(${clamp(h.calm, 0, 1)})`;
-  $("mood").textContent = h.stress > 0.5 ? "hiding…" : h.stress > 0.15 ? "nervous" : h.moving ? "calm" : "";
+  $("mood").textContent = h.stress > 0.5 ? "hiding…" : h.stress > 0.15 ? "nervous" : h.party ? "party! 🎉" : h.sleepy ? "napping" : h.moving ? "calm" : "";
+  const st = Math.floor(h.streak);
+  $("streak").textContent = st >= 30 && h.stress < 0.12 ? "🔥 " + Math.floor(st / 60) + ":" + String(st % 60).padStart(2, "0") : "";
   if (debugOn) {
     $("debug").textContent =
       `fwd    ${h.fwd.toFixed(2)}\nlat    ${h.lat.toFixed(2)}\njerk   ${h.jerk.toFixed(1)}\n` +
@@ -162,6 +169,11 @@ $("resetBtn").onclick = () => {
 };
 
 // taps on the tank: tap a creature to see its name, tap the water to feed
+function soundLabel() { $("soundBtn").textContent = Sfx.isOn() ? "Sound on" : "Sound off"; $("soundBtn").classList.toggle("on", Sfx.isOn()); }
+$("soundBtn").onclick = () => { Sfx.setOn(!Sfx.isOn()); soundLabel(); if (Sfx.isOn()) Sfx.play("blub"); };
+soundLabel();
+document.addEventListener("pointerdown", () => Sfx.unlock(), true);     // browsers allow sound only after a tap
+
 $("c").addEventListener("pointerdown", (e) => {
   if (panelOpen) { setPanel(false); return; }
   tank.tap(e.clientX, e.clientY);
@@ -238,6 +250,8 @@ $("cruiseBtn").onclick = () => {
   if (sim.cruise) toast("Cruising smoothly… the calm meter is filling.");
 };
 $("calmBtn").onclick = () => tank.addCalm(60);
+$("partyBtn").onclick = () => tank.party();
+$("visitBtn").onclick = () => tank.visitor();
 if (location.search.includes("sim")) { begin(); setSim(true); }
 </script>
 </body>
